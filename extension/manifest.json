@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Effector — Chrome MCP",
+  "description": "Expose real Chrome windows, tab groups, and tabs to local MCP harnesses.",
+  "version": "0.2.0",
+  "minimum_chrome_version": "105",
+  "incognito": "not_allowed",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Effector",
+    "default_popup": "popup.html"
+  }
+}

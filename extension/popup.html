@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Effector Chrome Inventory</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">EFFECTOR</p>
+        <h1>Chrome inventory</h1>
+        <p class="intro">
+          Reads standard Chrome window, tab-group, and tab metadata without
+          activating or waking tabs. Configured MCP clients can receive titles,
+          URLs, favicons, and browser organization metadata. Incognito access is
+          disabled.
+        </p>
+      </header>
+
+      <p id="bridge-status" class="status" role="status">Checking native broker...</p>
+
+      <section class="controls" aria-label="Inventory controls">
+        <button id="run" class="primary" type="button">Read Chrome state</button>
+        <button id="copy" type="button" disabled>Copy JSON</button>
+        <button id="download" type="button" disabled>Download JSON</button>
+      </section>
+
+      <p id="status" class="status" role="status">Ready.</p>
+      <section id="summary" class="summary" aria-label="Inventory summary" hidden></section>
+      <pre id="output" aria-label="Inventory JSON output">No inventory has been read.</pre>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

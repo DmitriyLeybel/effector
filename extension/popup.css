@@ -1,0 +1,142 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  background: #111318;
+  color: #edf0f7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 680px;
+  min-height: 540px;
+  margin: 0;
+  background:
+    radial-gradient(circle at top right, rgb(103 80 164 / 24%), transparent 38%),
+    #111318;
+}
+
+main {
+  padding: 22px;
+}
+
+header {
+  max-width: 640px;
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: #b9a8ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.intro {
+  margin: 9px 0 0;
+  color: #b8becb;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid #424858;
+  border-radius: 8px;
+  background: #252a35;
+  color: #f5f6fb;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #303746;
+}
+
+button.primary {
+  border-color: #7b61d1;
+  background: #6d54c2;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #8068d8;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.status {
+  min-height: 20px;
+  margin: 14px 0 8px;
+  color: #aeb5c4;
+  font-size: 12px;
+}
+
+.status.error {
+  color: #ff9c9c;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.metric {
+  padding: 9px 10px;
+  border: 1px solid #303644;
+  border-radius: 8px;
+  background: rgb(31 35 44 / 80%);
+}
+
+.metric strong,
+.metric span {
+  display: block;
+}
+
+.metric strong {
+  font-size: 18px;
+}
+
+.metric span {
+  margin-top: 2px;
+  color: #9da5b5;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+pre {
+  height: 295px;
+  margin: 0;
+  padding: 13px;
+  overflow: auto;
+  border: 1px solid #303644;
+  border-radius: 9px;
+  background: #0b0d11;
+  color: #d8deeb;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  white-space: pre;
+}

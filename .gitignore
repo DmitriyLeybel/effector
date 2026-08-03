@@ -1,0 +1,21 @@
+# Local reports can contain private tab titles and URLs.
+artifacts/
+*.dump.json
+effector-chrome-inventory-*.json
+
+# Local runtime state and secrets.
+.env
+.env.*
+!.env.example
+data/
+
+# Local editor and operating-system state.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Build output and dependencies.
+dist/
+node_modules/
+target/
