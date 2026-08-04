@@ -71,9 +71,10 @@ but divides new state deliberately:
 - The broker owns complete normalized browser baselines, random typed public
   references and cursors, immutable snapshots, exact mutation plans, and MCP
   capability discovery. This retained state is memory-only.
-- Broker snapshot, cursor, plan, and artifact stores use bounded FIFO eviction
-  and fixed creation-time TTLs that are not refreshed by reads. Counts are
-  computed and returned without retention.
+- A broker-owned class-aware store gives retained kinds one aggregate byte cap,
+  per-class count/byte limits, global FIFO pressure, and fixed creation-time TTLs
+  that reads do not refresh. Browser snapshots use it now; plans and page
+  snapshots remain future payload classes. Counts are returned without retention.
 - Snapshot windows are ordered with the focused window first and remaining
   windows by ascending runtime Chrome window ID; tab-strip order remains Chrome
   order.

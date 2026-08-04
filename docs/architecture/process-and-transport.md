@@ -145,10 +145,17 @@ supported.
 ## Backpressure and limits
 
 The broker uses a bounded Native Messaging writer queue, a 30-second broker read
-deadline, and a 29-second extension read deadline. It rejects requests over the
-product limit before pending insertion or writer queueing. Protocol v3 owns and
-validates one bounded PNG artifact shape, but current methods reject artifacts.
-Browser snapshots use complete bounded baselines, FIFO retained stores, fixed
-non-refreshing TTLs, and explicit count/byte limits. Mutation-specific task
-ownership and cancellation-aware non-atomic outcome handling remain
-unimplemented.
+deadline, and a 29-second maximum extension read budget. It rejects requests over
+the product limit before lifecycle insertion or writer queueing. The writer
+recomputes the extension budget when dequeuing, commits dispatch before the
+first frame byte, acknowledges successful flush, and skips queued requests whose
+waiter left, deadline elapsed, or broker began shutdown. Bounded terminal read
+records validate late responses without retaining browser result data. Protocol
+v3 owns and validates one bounded PNG artifact shape, but current methods reject
+artifacts.
+Browser snapshots use complete bounded baselines and one broker-owned,
+class-aware aggregate retention store. An injected monotonic clock, per-class
+count/byte policy, global FIFO pressure, fixed non-refreshing TTLs, and owned
+eviction cleanup preserve exact accounting as future retained kinds are added.
+Keyed mutation-task ownership, multi-waiter result sharing, overlap lanes, and
+cancellation-aware non-atomic outcome handling remain unimplemented.

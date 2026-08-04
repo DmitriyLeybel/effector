@@ -25,10 +25,13 @@ goldens, optional/non-null input-schema correction, compact-output omission
 alignment, filter/scope/hierarchy coverage, exact result-size boundaries,
 fixed non-refreshing TTL/FIFO behavior, counts calls not consuming snapshot slots,
 atomic failed construction at full retention capacity, multi-record expiry
-accounting, and same-installation broker-restart invalidation. Snapshot lookup,
-remaining races and aggregate retention-byte quota cases, P2.1 broker-owned
-operation tasks, and generalized retention remain open; they must close before
-mutations are advertised.
+accounting, and same-installation broker-restart invalidation. P2.1 now has typed
+browser/snapshot/cursor references, injected monotonic time, one class-aware
+aggregate retention store, internal `browserSnapshotRef` lookup, and a bounded
+read request lifecycle with writer-owned dispatch commitment and dequeue-time
+deadline budgets. Keyed broker-owned operation tasks, overlap lanes, remaining
+races, client/live evidence, and later retained payload migrations remain open;
+they must close before mutations are advertised.
 
 [`Part 3`](mcp-tool-surface-plan-part-3.md) overlays workflow-efficiency and
 schema decision gates on P2.5, P2.7, P2.8, and release measurement. It does not

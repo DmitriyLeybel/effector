@@ -4,6 +4,9 @@ mod doctor;
 mod install;
 mod mcp;
 mod protocol;
+mod references;
+mod request_lifecycle;
+mod retention;
 mod runtime;
 mod settings;
 

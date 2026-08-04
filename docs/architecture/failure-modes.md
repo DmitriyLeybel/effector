@@ -30,10 +30,11 @@ restart, and broker-restart rows below are implemented foundations from ADR
 | Protocol v2 and v3 components are mixed, or v3 ABI revisions conflict | Capability, dispatch, or artifact fields could be misread | Fail the handshake visibly with no downgrade; broker and extension upgrade together |
 | Complete browser baseline exceeds retention bounds | A partial baseline could look authoritative | Reject the snapshot as too large; never fall back to a live or incomplete baseline |
 | Snapshot, cursor, or plan reaches fixed TTL | A stale handle could prolong sensitive state | Return handle-expired; reads never refresh TTL |
-| FIFO store reaches its object or byte bound | New retained state cannot fit | Evict the oldest eligible retained record and invalidate its dependent handles |
+| A retained class or the aggregate store reaches its object or byte bound | New retained state cannot fit | Evict the oldest eligible class record or globally oldest aggregate record and clean up its dependent handles |
 | Caller tampers with or invents a cursor | Pagination authority is untrusted | Accept only random server-side cursor handles tied to retained immutable state |
 | Counts call completes | Counts could become an unintended retained inventory | Return counts without retaining a snapshot, cursor, or count record |
 | `frozen` filter is requested where Chrome cannot report it | Missing could be mistaken for false | Return capability-unavailable or unsupported rather than an incorrect match set |
+| A read waiter leaves or its deadline expires while queued | Work could dispatch after its caller no longer observes it | Remove the waiter and have the writer skip the unclaimed frame; validate any bounded late response by its retained method policy |
 | User changes relevant target state after preview | A mutation could affect unintended state | Recheck exact incarnation and operation-specific preconditions before each operation |
 | Tab disappears before mutation | Chrome returns missing tab | Return typed not-found; never reuse the old ID |
 | Chrome restarts and reuses numeric IDs | A stale reference could target a new object | Use random incarnations and broker refs; reject every pre-restart public handle |

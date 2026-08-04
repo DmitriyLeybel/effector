@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, HashSet};
 
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -9,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     broker::{BrowserRequestError, BrowserRequestHandle},
     protocol::{BrowserMethod, DomainError},
-    runtime::{BrokerRuntime, random_ref},
+    references::{BrowserSnapshotRef, CursorRef, GroupRef, SnapshotReferences, TabRef, WindowRef},
+    runtime::BrokerRuntime,
 };
 
 const DEFAULT_LIMIT: usize = 100;
@@ -17,22 +15,8 @@ const MAX_LIMIT: usize = 250;
 const MAX_TARGET_TABS: usize = 250;
 const MAX_QUERY_BYTES: usize = 4096;
 const MAX_CURSOR_RECORDS: usize = 10_000;
-const MAX_RETAINED_SNAPSHOTS: usize = 16;
-const MAX_RETAINED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_BASELINE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RESULT_BYTES: usize = 4 * 1024 * 1024;
-const SNAPSHOT_TTL: Duration = Duration::from_secs(2 * 60);
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(transparent)]
-pub(crate) struct WindowRef(String);
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(transparent)]
-pub(crate) struct GroupRef(String);
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(transparent)]
-pub(crate) struct TabRef(String);
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -88,12 +72,12 @@ pub(crate) struct BrowserSnapshotParams {
     /// Continue an immutable retained browser snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
-    pub cursor: Option<String>,
+    pub cursor: Option<CursorRef>,
 }
 
 impl BrowserSnapshotParams {
     fn validate(&self) -> Result<(), DomainError> {
-        if self.cursor.is_some() {
+        if let Some(cursor) = &self.cursor {
             let only_cursor = self.window_ref.is_none()
                 && self.group_ref.is_none()
                 && self.tab_refs.is_none()
@@ -109,7 +93,7 @@ impl BrowserSnapshotParams {
                     "A cursor call may contain only cursor.",
                 ));
             }
-            validate_ref("cursor", self.cursor.as_deref(), "cur")?;
+            cursor.validate("cursor")?;
             return Ok(());
         }
 
@@ -121,16 +105,12 @@ impl BrowserSnapshotParams {
                 "windowRef, groupRef, and tabRefs are mutually exclusive.",
             ));
         }
-        validate_ref(
-            "windowRef",
-            self.window_ref.as_ref().map(|value| value.0.as_str()),
-            "win",
-        )?;
-        validate_ref(
-            "groupRef",
-            self.group_ref.as_ref().map(|value| value.0.as_str()),
-            "grp",
-        )?;
+        if let Some(reference) = &self.window_ref {
+            reference.validate("windowRef")?;
+        }
+        if let Some(reference) = &self.group_ref {
+            reference.validate("groupRef")?;
+        }
         if let Some(tab_refs) = &self.tab_refs {
             if tab_refs.is_empty() {
                 return Err(DomainError::invalid_argument(
@@ -144,8 +124,8 @@ impl BrowserSnapshotParams {
             }
             let mut unique = HashSet::new();
             for tab_ref in tab_refs {
-                validate_ref("tabRefs", Some(&tab_ref.0), "tab")?;
-                if !unique.insert(tab_ref.0.as_str()) {
+                tab_ref.validate("tabRefs")?;
+                if !unique.insert(tab_ref.as_str()) {
                     return Err(DomainError::invalid_argument(
                         "tabRefs must not contain duplicates.",
                     ));
@@ -202,17 +182,6 @@ pub(crate) fn decode_params(
     serde_json::from_value(value).map_err(|_| {
         DomainError::invalid_argument("browser.snapshot arguments did not match the tool schema.")
     })
-}
-
-fn validate_ref(field: &str, value: Option<&str>, prefix: &str) -> Result<(), DomainError> {
-    if let Some(value) = value
-        && (value.len() <= prefix.len() + 1 || !value.starts_with(&format!("{prefix}_")))
-    {
-        return Err(DomainError::invalid_argument(format!(
-            "{field} is not a valid {prefix} reference."
-        )));
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -433,24 +402,29 @@ fn invalid_baseline(message: &str) -> DomainError {
     DomainError::new("INTERNAL_ERROR", message)
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct SnapshotReferences {
-    pub(crate) windows: HashMap<String, String>,
-    pub(crate) groups: HashMap<String, String>,
-    pub(crate) tabs: HashMap<String, String>,
-}
-
 pub(crate) struct StoredSnapshot {
-    snapshot_ref: String,
-    created_at: Instant,
-    retained_bytes: usize,
+    snapshot_ref: BrowserSnapshotRef,
     baseline: Baseline,
     references: SnapshotReferences,
     matched_tab_keys: Vec<String>,
     detail: SnapshotDetail,
     limit: usize,
-    cursors: HashMap<String, usize>,
-    cursor_by_offset: HashMap<usize, String>,
+    cursors: HashMap<CursorRef, usize>,
+    cursor_by_offset: HashMap<usize, CursorRef>,
+}
+
+impl StoredSnapshot {
+    pub(crate) fn snapshot_ref(&self) -> &BrowserSnapshotRef {
+        &self.snapshot_ref
+    }
+
+    pub(crate) fn cursor_offset(&self, cursor: &CursorRef) -> Option<usize> {
+        self.cursors.get(cursor).copied()
+    }
+
+    pub(crate) fn browser_instance_id(&self) -> &str {
+        &self.baseline.browser_instance_id
+    }
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -498,18 +472,18 @@ pub(crate) struct SnapshotCounts {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SnapshotPage {
-    browser_snapshot_ref: String,
+    browser_snapshot_ref: BrowserSnapshotRef,
     captured_at: String,
     total_matched: usize,
     windows: Vec<SnapshotWindow>,
-    next_cursor: Option<String>,
+    next_cursor: Option<CursorRef>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SnapshotWindow {
     #[serde(rename = "ref")]
-    reference: String,
+    reference: WindowRef,
     #[serde(default, skip_serializing_if = "is_false")]
     focused: bool,
     items: Vec<SnapshotItem>,
@@ -549,7 +523,7 @@ struct SnapshotGroupItem {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SnapshotGroup {
     #[serde(rename = "ref")]
-    reference: String,
+    reference: GroupRef,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     color: String,
@@ -565,7 +539,7 @@ struct SnapshotGroup {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SnapshotTab {
     #[serde(rename = "ref")]
-    reference: String,
+    reference: TabRef,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -593,7 +567,7 @@ struct SnapshotTab {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_accessed: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    opener_ref: Option<String>,
+    opener_ref: Option<TabRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fav_icon_url: Option<String>,
 }
@@ -625,7 +599,7 @@ pub(crate) async fn execute(
     let raw_size = serde_json::to_vec(&raw)
         .map_err(|_| invalid_baseline("The browser snapshot baseline could not be measured."))?
         .len();
-    if raw_size > MAX_RETAINED_BYTES {
+    if raw_size > MAX_BASELINE_BYTES {
         return Err(DomainError::new(
             "RESULT_TOO_LARGE",
             "The complete browser snapshot is too large to retain; narrow the browser state.",
@@ -687,10 +661,8 @@ pub(crate) async fn execute(
     let mut next_references = state.references.clone();
     let references = next_references.reconcile(&baseline)?;
     let matched = matched_tabs(&baseline, &references, &params)?;
-    let reference_bytes = serde_json::to_vec(&references)
-        .map_err(|_| invalid_baseline("The browser references could not be measured."))?
-        .len();
-    if reference_bytes > MAX_RETAINED_BYTES {
+    let reference_bytes = references.retained_bytes()?;
+    if reference_bytes > MAX_BASELINE_BYTES {
         return Err(DomainError::new(
             "RESULT_TOO_LARGE",
             "The browser reference set is too large to retain; narrow the browser state.",
@@ -705,9 +677,7 @@ pub(crate) async fn execute(
     }
 
     let mut stored = StoredSnapshot {
-        snapshot_ref: random_ref("bs"),
-        created_at: Instant::now(),
-        retained_bytes: 0,
+        snapshot_ref: BrowserSnapshotRef::issue(),
         baseline,
         references,
         matched_tab_keys: matched,
@@ -730,26 +700,20 @@ pub(crate) async fn execute(
     }
     prepare_cursors(&mut stored);
     let retained_bytes = retained_size(&stored)?;
-    if reference_bytes + retained_bytes > MAX_RETAINED_BYTES {
-        return Err(DomainError::new(
-            "RESULT_TOO_LARGE",
-            "The complete browser snapshot is too large to retain; narrow the query.",
-        ));
-    }
-    stored.retained_bytes = retained_bytes;
-    let page = render_page(&mut stored, 0)?;
-    remove_expired(&mut state);
-    while state.snapshots.len() >= MAX_RETAINED_SNAPSHOTS
-        || reference_bytes + state.snapshot_bytes + retained_bytes > MAX_RETAINED_BYTES
-    {
-        evict_oldest(&mut state);
-    }
+    let page = render_page(&stored, 0)?;
+    let snapshot_ref = stored.snapshot_ref().clone();
+    let model_revision = stored.baseline.model_revision;
+    let now = runtime.now();
+    state.retention.retain_browser_snapshot(
+        now,
+        reference_bytes,
+        snapshot_ref,
+        retained_bytes,
+        stored,
+    )?;
     state.references = next_references;
-    state.reference_bytes = reference_bytes;
-    state.latest_model_revision = Some(stored.baseline.model_revision);
+    state.latest_model_revision = Some(model_revision);
     state.latest_model_fingerprint = Some(model_fingerprint);
-    state.snapshot_bytes += stored.retained_bytes;
-    state.snapshots.push_back(stored);
     Ok(BrowserSnapshotToolOutput::Snapshot(page))
 }
 
@@ -807,22 +771,17 @@ fn matched_tabs(
     let window_key = params
         .window_ref
         .as_ref()
-        .map(|reference| resolve_ref(&references.windows, &reference.0, "window"))
+        .map(|reference| references.resolve_window(reference))
         .transpose()?;
     let group_key = params
         .group_ref
         .as_ref()
-        .map(|reference| resolve_ref(&references.groups, &reference.0, "group"))
+        .map(|reference| references.resolve_group(reference))
         .transpose()?;
     let tab_keys = params
         .tab_refs
         .as_ref()
-        .map(|requested| {
-            requested
-                .iter()
-                .map(|reference| resolve_ref(&references.tabs, &reference.0, "tab"))
-                .collect::<Result<HashSet<_>, _>>()
-        })
+        .map(|requested| references.resolve_tabs(requested))
         .transpose()?;
     let query = params.query.as_ref().map(|query| query.to_lowercase());
 
@@ -873,22 +832,6 @@ fn matched_tabs(
     Ok(tabs.into_iter().map(|tab| tab.key.clone()).collect())
 }
 
-fn resolve_ref(
-    references: &HashMap<String, String>,
-    requested: &str,
-    object_type: &str,
-) -> Result<String, DomainError> {
-    references
-        .iter()
-        .find_map(|(key, reference)| (reference == requested).then(|| key.clone()))
-        .ok_or_else(|| {
-            DomainError::new(
-                "NOT_FOUND",
-                format!("The referenced {object_type} no longer exists."),
-            )
-        })
-}
-
 fn counts(baseline: &Baseline, matched: &[String]) -> SnapshotCounts {
     let matched: HashSet<&str> = matched.iter().map(String::as_str).collect();
     let tabs: Vec<&BaselineTab> = baseline
@@ -916,9 +859,7 @@ fn retained_size(snapshot: &StoredSnapshot) -> Result<usize, DomainError> {
     let baseline_bytes = serde_json::to_vec(&snapshot.baseline)
         .map_err(|_| invalid_baseline("The browser snapshot could not be measured."))?
         .len();
-    let reference_bytes = serde_json::to_vec(&snapshot.references)
-        .map_err(|_| invalid_baseline("The browser references could not be measured."))?
-        .len();
+    let reference_bytes = snapshot.references.retained_bytes()?;
     let matched_bytes = snapshot
         .matched_tab_keys
         .iter()
@@ -927,14 +868,14 @@ fn retained_size(snapshot: &StoredSnapshot) -> Result<usize, DomainError> {
     let cursor_bytes = snapshot
         .cursors
         .keys()
-        .map(String::len)
+        .map(|cursor| cursor.as_str().len())
         .sum::<usize>()
         .saturating_add(snapshot.cursors.len() * std::mem::size_of::<usize>())
         .saturating_add(
             snapshot
                 .cursor_by_offset
                 .values()
-                .map(String::len)
+                .map(|cursor| cursor.as_str().len())
                 .sum::<usize>(),
         )
         .saturating_add(snapshot.cursor_by_offset.len() * std::mem::size_of::<usize>());
@@ -947,44 +888,46 @@ fn retained_size(snapshot: &StoredSnapshot) -> Result<usize, DomainError> {
 fn prepare_cursors(snapshot: &mut StoredSnapshot) {
     let mut offset = snapshot.limit;
     while offset < snapshot.matched_tab_keys.len() {
-        let cursor = random_ref("cur");
+        let cursor = CursorRef::issue();
         snapshot.cursors.insert(cursor.clone(), offset);
         snapshot.cursor_by_offset.insert(offset, cursor);
         offset = offset.saturating_add(snapshot.limit);
     }
 }
 
-fn continue_snapshot(runtime: &BrokerRuntime, cursor: &str) -> Result<SnapshotPage, DomainError> {
+fn continue_snapshot(
+    runtime: &BrokerRuntime,
+    cursor: &CursorRef,
+) -> Result<SnapshotPage, DomainError> {
     let mut state = runtime.state();
-    remove_expired(&mut state);
-    for snapshot in &mut state.snapshots {
-        if let Some(offset) = snapshot.cursors.get(cursor).copied() {
-            return render_page(snapshot, offset);
-        }
-    }
-    Err(DomainError::new(
+    let now = runtime.now();
+    state.retention.expire(now);
+    let (snapshot_ref, offset) = state
+        .retention
+        .browser_snapshot_for_cursor(cursor)
+        .map(|(snapshot, offset)| (snapshot.snapshot_ref().clone(), offset))
+        .ok_or_else(expired_cursor)?;
+    let browser_instance_id = state
+        .connected
+        .as_ref()
+        .map(|connected| connected.browser_instance_id.clone())
+        .ok_or_else(expired_cursor)?;
+    let snapshot = state.retention.browser_snapshot_by_handle(
+        now,
+        snapshot_ref.as_str(),
+        &browser_instance_id,
+    )?;
+    render_page(snapshot, offset)
+}
+
+fn expired_cursor() -> DomainError {
+    DomainError::new(
         "HANDLE_EXPIRED",
         "The browser snapshot cursor is invalid or no longer retained.",
-    ))
+    )
 }
 
-fn remove_expired(state: &mut crate::runtime::RuntimeState) {
-    while state
-        .snapshots
-        .front()
-        .is_some_and(|snapshot| snapshot.created_at.elapsed() >= SNAPSHOT_TTL)
-    {
-        evict_oldest(state);
-    }
-}
-
-fn evict_oldest(state: &mut crate::runtime::RuntimeState) {
-    if let Some(snapshot) = state.snapshots.pop_front() {
-        state.snapshot_bytes = state.snapshot_bytes.saturating_sub(snapshot.retained_bytes);
-    }
-}
-
-fn render_page(snapshot: &mut StoredSnapshot, offset: usize) -> Result<SnapshotPage, DomainError> {
+fn render_page(snapshot: &StoredSnapshot, offset: usize) -> Result<SnapshotPage, DomainError> {
     let end = offset
         .saturating_add(snapshot.limit)
         .min(snapshot.matched_tab_keys.len());
@@ -1035,7 +978,11 @@ fn render_page(snapshot: &mut StoredSnapshot, offset: usize) -> Result<SnapshotP
                 .filter(|key| tab_by_key[key.as_str()].window_key == tab.window_key)
                 .count();
             windows.push(SnapshotWindow {
-                reference: snapshot.references.windows[window.key.as_str()].clone(),
+                reference: snapshot
+                    .references
+                    .window_for_key(window.key.as_str())
+                    .cloned()
+                    .ok_or_else(missing_reference)?,
                 focused: window.focused,
                 items: Vec::new(),
                 partial: page_in_window < matching_in_window,
@@ -1049,13 +996,18 @@ fn render_page(snapshot: &mut StoredSnapshot, offset: usize) -> Result<SnapshotP
             });
         }
 
-        let output_tab = project_tab(tab, snapshot.detail, &snapshot.references);
+        let output_tab = project_tab(tab, snapshot.detail, &snapshot.references)?;
         let window = windows.last_mut().ok_or_else(|| {
             invalid_baseline("The browser snapshot hierarchy could not be reconstructed.")
         })?;
         if let Some(group_key) = tab.group_key.as_deref() {
+            let group_ref = snapshot
+                .references
+                .group_for_key(group_key)
+                .cloned()
+                .ok_or_else(missing_reference)?;
             if let Some(SnapshotItem::Group(previous)) = window.items.last_mut()
-                && previous.group.reference == snapshot.references.groups[group_key]
+                && previous.group.reference == group_ref
             {
                 previous.tabs.push(output_tab);
                 continue;
@@ -1081,7 +1033,7 @@ fn render_page(snapshot: &mut StoredSnapshot, offset: usize) -> Result<SnapshotP
                 .count();
             window.items.push(SnapshotItem::Group(SnapshotGroupItem {
                 group: SnapshotGroup {
-                    reference: snapshot.references.groups[group_key].clone(),
+                    reference: group_ref,
                     title: group.title.clone().filter(|title| !title.is_empty()),
                     color: group.color.clone(),
                     partial: page_in_group < matching_in_group,
@@ -1127,10 +1079,13 @@ fn project_tab(
     tab: &BaselineTab,
     detail: SnapshotDetail,
     references: &SnapshotReferences,
-) -> SnapshotTab {
+) -> Result<SnapshotTab, DomainError> {
     let is_full = detail == SnapshotDetail::Full;
-    SnapshotTab {
-        reference: references.tabs[tab.key.as_str()].clone(),
+    Ok(SnapshotTab {
+        reference: references
+            .tab_for_key(tab.key.as_str())
+            .cloned()
+            .ok_or_else(missing_reference)?,
         title: tab.title.clone().filter(|title| !title.is_empty()),
         url: tab.url.clone().filter(|url| !url.is_empty()),
         active: tab.active,
@@ -1156,30 +1111,38 @@ fn project_tab(
             .then(|| {
                 tab.opener_key
                     .as_ref()
-                    .and_then(|key| references.tabs.get(key).cloned())
+                    .and_then(|key| references.tab_for_key(key).cloned())
             })
             .flatten(),
         fav_icon_url: is_full
             .then(|| tab.fav_icon_url.clone().filter(|url| !url.is_empty()))
             .flatten(),
-    }
+    })
+}
+
+fn missing_reference() -> DomainError {
+    invalid_baseline("The browser snapshot references were incomplete.")
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
         collections::HashMap,
+        sync::Arc,
         time::{Duration, Instant},
     };
 
     use serde_json::json;
 
-    use crate::runtime::BrokerRuntime;
+    use crate::{
+        references::{BrowserSnapshotRef, SnapshotReferences, TabRef, WindowRef},
+        retention::FakeClock,
+        runtime::BrokerRuntime,
+    };
 
     use super::{
-        Baseline, BrowserSnapshotParams, MAX_RESULT_BYTES, SNAPSHOT_TTL, SnapshotDetail,
-        SnapshotReferences, StoredSnapshot, continue_snapshot, decode_params, render_page,
-        retained_size,
+        Baseline, BrowserSnapshotParams, MAX_RESULT_BYTES, SnapshotDetail, StoredSnapshot,
+        decode_params, render_page, retained_size,
     };
 
     #[test]
@@ -1256,21 +1219,13 @@ mod tests {
         );
 
         let exact_refs = BrowserSnapshotParams {
-            tab_refs: Some(
-                (0..250)
-                    .map(|index| super::TabRef(format!("tab_{index}")))
-                    .collect(),
-            ),
+            tab_refs: Some((0..250).map(|_| TabRef::issue()).collect()),
             limit: Some(250),
             ..Default::default()
         };
         assert!(exact_refs.validate().is_ok());
         let oversized_refs = BrowserSnapshotParams {
-            tab_refs: Some(
-                (0..251)
-                    .map(|index| super::TabRef(format!("tab_{index}")))
-                    .collect(),
-            ),
+            tab_refs: Some((0..251).map(|_| TabRef::issue()).collect()),
             ..Default::default()
         };
         assert_eq!(
@@ -1288,93 +1243,70 @@ mod tests {
 
     #[test]
     fn one_record_honors_the_exact_result_byte_limit() {
-        let mut probe = stored_snapshot("x".to_owned());
-        let probe_size = serde_json::to_vec(&render_page(&mut probe, 0).unwrap())
+        let probe = stored_snapshot("x".to_owned());
+        let probe_size = serde_json::to_vec(&render_page(&probe, 0).unwrap())
             .unwrap()
             .len();
         let exact_title_len = MAX_RESULT_BYTES - probe_size + 1;
-        let mut exact = stored_snapshot("x".repeat(exact_title_len));
-        let exact_page = render_page(&mut exact, 0).unwrap();
+        let exact = stored_snapshot("x".repeat(exact_title_len));
+        let exact_page = render_page(&exact, 0).unwrap();
         assert_eq!(
             serde_json::to_vec(&exact_page).unwrap().len(),
             MAX_RESULT_BYTES
         );
 
-        let mut oversized = stored_snapshot("x".repeat(exact_title_len + 1));
+        let oversized = stored_snapshot("x".repeat(exact_title_len + 1));
         assert_eq!(
-            render_page(&mut oversized, 0).unwrap_err().code,
+            render_page(&oversized, 0).unwrap_err().code,
             "RESULT_TOO_LARGE"
         );
     }
 
     #[test]
-    fn expired_cursor_is_removed_before_lookup() {
-        let runtime = BrokerRuntime::new();
-        let mut snapshot = stored_snapshot("title".to_owned());
-        snapshot.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_millis(1);
-        snapshot.cursors.insert("cur_expired".to_owned(), 0);
-        snapshot.retained_bytes = retained_size(&snapshot).unwrap();
-        {
-            let mut state = runtime.state();
-            state.snapshot_bytes = snapshot.retained_bytes;
-            state.snapshots.push_back(snapshot);
-        }
+    fn typed_snapshot_lookup_enforces_identity_and_expiry() {
+        let start = Instant::now();
+        let clock = FakeClock::new(start);
+        let runtime = BrokerRuntime::with_clock(Arc::new(clock.clone()));
+        let snapshot = stored_snapshot("title".to_owned());
+        let snapshot_ref = snapshot.snapshot_ref().clone();
+        let snapshot_bytes = retained_size(&snapshot).unwrap();
+        runtime
+            .state()
+            .retention
+            .retain_browser_snapshot(start, 0, snapshot_ref.clone(), snapshot_bytes, snapshot)
+            .unwrap();
 
         assert_eq!(
-            continue_snapshot(&runtime, "cur_expired").unwrap_err().code,
+            runtime
+                .state()
+                .retention
+                .browser_snapshot_by_handle(start, snapshot_ref.as_str(), "browser")
+                .unwrap()
+                .browser_instance_id(),
+            "browser"
+        );
+        assert_eq!(
+            runtime
+                .state()
+                .retention
+                .browser_snapshot_by_handle(start, snapshot_ref.as_str(), "other-browser")
+                .err()
+                .unwrap()
+                .code,
             "HANDLE_EXPIRED"
         );
-        let state = runtime.state();
-        assert!(state.snapshots.is_empty());
-        assert_eq!(state.snapshot_bytes, 0);
-    }
 
-    #[test]
-    fn expiry_removes_all_expired_prefix_records_and_preserves_exact_accounting() {
-        let runtime = BrokerRuntime::new();
-        let mut first = stored_snapshot("first".to_owned());
-        first.snapshot_ref = "bs_first".to_owned();
-        first.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_secs(2);
-        first.retained_bytes = retained_size(&first).unwrap();
-        let mut second = stored_snapshot("second".to_owned());
-        second.snapshot_ref = "bs_second".to_owned();
-        second.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_secs(1);
-        second.retained_bytes = retained_size(&second).unwrap();
-        let mut current = stored_snapshot("current".to_owned());
-        current.snapshot_ref = "bs_current".to_owned();
-        current.cursors.insert("cur_current".to_owned(), 0);
-        current.retained_bytes = retained_size(&current).unwrap();
-        let current_bytes = current.retained_bytes;
-        {
-            let mut state = runtime.state();
-            state.snapshot_bytes =
-                first.retained_bytes + second.retained_bytes + current.retained_bytes;
-            state.snapshots.extend([first, second, current]);
-        }
-
-        let page = continue_snapshot(&runtime, "cur_current").unwrap();
-        assert_eq!(page.browser_snapshot_ref, "bs_current");
-        let state = runtime.state();
-        assert_eq!(state.snapshots.len(), 1);
-        assert_eq!(state.snapshot_bytes, current_bytes);
-    }
-
-    #[test]
-    fn cursor_replay_does_not_refresh_snapshot_creation_time() {
-        let runtime = BrokerRuntime::new();
-        let created_at = Instant::now() - Duration::from_secs(30);
-        let mut snapshot = stored_snapshot("title".to_owned());
-        snapshot.created_at = created_at;
-        snapshot.cursors.insert("cur_replay".to_owned(), 0);
-        snapshot.retained_bytes = retained_size(&snapshot).unwrap();
-        {
-            let mut state = runtime.state();
-            state.snapshot_bytes = snapshot.retained_bytes;
-            state.snapshots.push_back(snapshot);
-        }
-
-        continue_snapshot(&runtime, "cur_replay").unwrap();
-        assert_eq!(runtime.state().snapshots[0].created_at, created_at);
+        clock.advance(Duration::from_secs(2 * 60));
+        assert_eq!(
+            runtime
+                .state()
+                .retention
+                .browser_snapshot_by_handle(runtime.now(), snapshot_ref.as_str(), "browser")
+                .err()
+                .unwrap()
+                .code,
+            "HANDLE_EXPIRED"
+        );
     }
 
     fn stored_snapshot(title: String) -> StoredSnapshot {
@@ -1394,15 +1326,13 @@ mod tests {
         }))
         .unwrap();
         StoredSnapshot {
-            snapshot_ref: "bs_test".to_owned(),
-            created_at: Instant::now(),
-            retained_bytes: 0,
+            snapshot_ref: BrowserSnapshotRef::issue(),
             baseline,
-            references: SnapshotReferences {
-                windows: HashMap::from([("window-key".to_owned(), "win_test".to_owned())]),
-                groups: HashMap::new(),
-                tabs: HashMap::from([("tab-key".to_owned(), "tab_test".to_owned())]),
-            },
+            references: SnapshotReferences::new(
+                HashMap::from([("window-key".to_owned(), WindowRef::issue())]),
+                HashMap::new(),
+                HashMap::from([("tab-key".to_owned(), TabRef::issue())]),
+            ),
             matched_tab_keys: vec!["tab-key".to_owned()],
             detail: SnapshotDetail::Compact,
             limit: 1,

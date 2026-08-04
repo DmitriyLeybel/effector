@@ -1,29 +1,39 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
-use uuid::Uuid;
-
 use crate::{
-    browser_snapshot::{Baseline, SnapshotReferences, StoredSnapshot},
+    browser_snapshot::{Baseline, StoredSnapshot},
     protocol::{
         Capabilities, CapabilitiesChangedMessage, DomainError, ImplementationEntry, ReadyMessage,
         validate_capability_implementations,
     },
+    references::{
+        BrowserObjectRef, BrowserSnapshotRef, CursorRef, GroupRef, SnapshotReferences, TabRef,
+        WindowRef,
+    },
+    retention::{
+        Clock, RemovedRecord, RetainedStore, RetentionCandidate, RetentionError, RetentionPolicy,
+        SystemClock,
+    },
 };
+
+const MAX_RETAINED_SNAPSHOTS: usize = 16;
+const MAX_RETAINED_BYTES: usize = 32 * 1024 * 1024;
+const SNAPSHOT_TTL: Duration = Duration::from_secs(2 * 60);
 
 #[derive(Clone)]
 pub(crate) struct BrokerRuntime {
     inner: Arc<Mutex<RuntimeState>>,
+    clock: Arc<dyn Clock>,
 }
 
 pub(crate) struct RuntimeState {
     pub(crate) connected: Option<ConnectedBrowser>,
     pub(crate) references: ReferenceRegistry,
-    pub(crate) snapshots: VecDeque<StoredSnapshot>,
-    pub(crate) snapshot_bytes: usize,
-    pub(crate) reference_bytes: usize,
+    pub(crate) retention: RuntimeRetention,
     pub(crate) latest_model_revision: Option<u64>,
     pub(crate) latest_model_fingerprint: Option<Vec<u8>>,
 }
@@ -41,30 +51,56 @@ pub(crate) struct ConnectedBrowser {
 
 #[derive(Clone, Default)]
 pub(crate) struct ReferenceRegistry {
-    windows: HashMap<String, ReferenceRecord>,
-    groups: HashMap<String, ReferenceRecord>,
-    tabs: HashMap<String, ReferenceRecord>,
+    windows: HashMap<String, ReferenceRecord<WindowRef>>,
+    groups: HashMap<String, ReferenceRecord<GroupRef>>,
+    tabs: HashMap<String, ReferenceRecord<TabRef>>,
 }
 
 #[derive(Clone)]
-struct ReferenceRecord {
+struct ReferenceRecord<R> {
     chrome_id: i32,
-    public_ref: String,
+    public_ref: R,
+}
+
+pub(crate) struct RuntimeRetention {
+    records: RetainedStore<RetentionKey, RetainedValue, RetentionClass>,
+    reference_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RetentionKey {
+    BrowserSnapshot(BrowserSnapshotRef),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RetentionClass {
+    BrowserSnapshot,
+}
+
+enum RetainedValue {
+    BrowserSnapshot(StoredSnapshot),
 }
 
 impl BrokerRuntime {
     pub(crate) fn new() -> Self {
+        Self::with_clock(Arc::new(SystemClock))
+    }
+
+    pub(crate) fn with_clock(clock: Arc<dyn Clock>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(RuntimeState {
                 connected: None,
                 references: ReferenceRegistry::default(),
-                snapshots: VecDeque::new(),
-                snapshot_bytes: 0,
-                reference_bytes: 0,
+                retention: RuntimeRetention::new(),
                 latest_model_revision: None,
                 latest_model_fingerprint: None,
             })),
+            clock,
         }
+    }
+
+    pub(crate) fn now(&self) -> Instant {
+        self.clock.now()
     }
 
     pub(crate) fn connect(&self, ready: ReadyMessage, implementations: Vec<ImplementationEntry>) {
@@ -142,9 +178,7 @@ impl BrokerRuntime {
 impl RuntimeState {
     fn clear_retained(&mut self) {
         self.references = ReferenceRegistry::default();
-        self.snapshots.clear();
-        self.snapshot_bytes = 0;
-        self.reference_bytes = 0;
+        self.retention.clear();
         self.latest_model_revision = None;
         self.latest_model_fingerprint = None;
     }
@@ -173,28 +207,27 @@ impl ReferenceRegistry {
         self.tabs.retain(|key, _| tab_keys.contains(key.as_str()));
 
         for window in &baseline.windows {
-            reconcile_reference(&mut self.windows, &window.key, window.id, "win", "window")?;
+            reconcile_reference(&mut self.windows, &window.key, window.id, "window")?;
         }
         for group in &baseline.groups {
-            reconcile_reference(&mut self.groups, &group.key, group.id, "grp", "group")?;
+            reconcile_reference(&mut self.groups, &group.key, group.id, "group")?;
         }
         for tab in &baseline.tabs {
-            reconcile_reference(&mut self.tabs, &tab.key, tab.id, "tab", "tab")?;
+            reconcile_reference(&mut self.tabs, &tab.key, tab.id, "tab")?;
         }
 
-        Ok(SnapshotReferences {
-            windows: public_references(&self.windows),
-            groups: public_references(&self.groups),
-            tabs: public_references(&self.tabs),
-        })
+        Ok(SnapshotReferences::new(
+            public_references(&self.windows),
+            public_references(&self.groups),
+            public_references(&self.tabs),
+        ))
     }
 }
 
-fn reconcile_reference(
-    records: &mut HashMap<String, ReferenceRecord>,
+fn reconcile_reference<R: BrowserObjectRef>(
+    records: &mut HashMap<String, ReferenceRecord<R>>,
     key: &str,
     chrome_id: i32,
-    prefix: &str,
     kind: &str,
 ) -> Result<(), DomainError> {
     if let Some(existing) = records.get(key) {
@@ -210,21 +243,141 @@ fn reconcile_reference(
         key.to_owned(),
         ReferenceRecord {
             chrome_id,
-            public_ref: random_ref(prefix),
+            public_ref: R::issue(),
         },
     );
     Ok(())
 }
 
-fn public_references(records: &HashMap<String, ReferenceRecord>) -> HashMap<String, String> {
+fn public_references<R: Clone>(
+    records: &HashMap<String, ReferenceRecord<R>>,
+) -> HashMap<String, R> {
     records
         .iter()
         .map(|(key, record)| (key.clone(), record.public_ref.clone()))
         .collect()
 }
 
-pub(crate) fn random_ref(prefix: &str) -> String {
-    format!("{prefix}_{}", Uuid::new_v4().simple())
+impl RuntimeRetention {
+    fn new() -> Self {
+        Self {
+            records: RetainedStore::new(MAX_RETAINED_BYTES),
+            reference_bytes: 0,
+        }
+    }
+
+    pub(crate) fn retain_browser_snapshot(
+        &mut self,
+        now: Instant,
+        next_reference_bytes: usize,
+        snapshot_ref: BrowserSnapshotRef,
+        snapshot_bytes: usize,
+        snapshot: StoredSnapshot,
+    ) -> Result<(), DomainError> {
+        let removed = self
+            .records
+            .insert(
+                now,
+                next_reference_bytes,
+                RetentionCandidate {
+                    key: RetentionKey::BrowserSnapshot(snapshot_ref),
+                    class: RetentionClass::BrowserSnapshot,
+                    policy: RetentionPolicy {
+                        ttl: SNAPSHOT_TTL,
+                        max_records: MAX_RETAINED_SNAPSHOTS,
+                        max_bytes: MAX_RETAINED_BYTES,
+                    },
+                    retained_bytes: snapshot_bytes,
+                    value: RetainedValue::BrowserSnapshot(snapshot),
+                },
+            )
+            .map_err(map_retention_error)?;
+        cleanup_removed(removed);
+        self.reference_bytes = next_reference_bytes;
+        Ok(())
+    }
+
+    pub(crate) fn expire(&mut self, now: Instant) {
+        let removed = self.records.expire(now);
+        cleanup_removed(removed);
+    }
+
+    pub(crate) fn browser_snapshot(
+        &self,
+        reference: &BrowserSnapshotRef,
+    ) -> Option<&StoredSnapshot> {
+        let key = RetentionKey::BrowserSnapshot(reference.clone());
+        match self.records.get(&key) {
+            Some(RetainedValue::BrowserSnapshot(snapshot)) => Some(snapshot),
+            None => None,
+        }
+    }
+
+    pub(crate) fn browser_snapshot_by_handle(
+        &mut self,
+        now: Instant,
+        handle: &str,
+        expected_browser_instance_id: &str,
+    ) -> Result<&StoredSnapshot, DomainError> {
+        self.expire(now);
+        let reference = BrowserSnapshotRef::parse("browserSnapshotRef", handle)?;
+        let snapshot = self.browser_snapshot(&reference).ok_or_else(|| {
+            DomainError::new(
+                "HANDLE_EXPIRED",
+                "The browser snapshot reference is invalid or no longer retained.",
+            )
+        })?;
+        if snapshot.browser_instance_id() != expected_browser_instance_id {
+            return Err(DomainError::new(
+                "HANDLE_EXPIRED",
+                "The browser snapshot reference belongs to another browser instance.",
+            ));
+        }
+        Ok(snapshot)
+    }
+
+    pub(crate) fn browser_snapshot_for_cursor(
+        &self,
+        cursor: &CursorRef,
+    ) -> Option<(&StoredSnapshot, usize)> {
+        self.records.values().find_map(|value| {
+            let RetainedValue::BrowserSnapshot(snapshot) = value;
+            snapshot
+                .cursor_offset(cursor)
+                .map(|offset| (snapshot, offset))
+        })
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.records.clear();
+        self.reference_bytes = 0;
+    }
+}
+
+fn cleanup_removed(records: Vec<RemovedRecord<RetentionKey, RetainedValue, RetentionClass>>) {
+    for record in records {
+        match (record.key, record.class, record.value) {
+            (
+                RetentionKey::BrowserSnapshot(_),
+                RetentionClass::BrowserSnapshot,
+                RetainedValue::BrowserSnapshot(_),
+            ) => {}
+        }
+        let _ = record.retained_bytes;
+    }
+}
+
+fn map_retention_error(error: RetentionError) -> DomainError {
+    match error {
+        RetentionError::CapacityExceeded => DomainError::new(
+            "RESULT_TOO_LARGE",
+            "The complete browser snapshot is too large to retain; narrow the query.",
+        ),
+        RetentionError::DuplicateKey | RetentionError::ArithmeticOverflow => DomainError::new(
+            "INTERNAL_ERROR",
+            "The browser snapshot could not be retained safely.",
+        ),
+    }
 }
 
 #[cfg(test)]

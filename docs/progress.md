@@ -83,6 +83,15 @@ Last updated: 2026-08-03
       malformed/oversized failures at full retention capacity, exact multi-record
       expiry accounting, stable references after failure, and cursor invalidation
       across same-installation broker restart.
+- [x] Started P2.1 production infrastructure with typed browser, snapshot, and
+      cursor references plus one injected-clock, class-aware aggregate retention
+      store. Browser snapshots now use central TTL/count/byte admission, owned
+      eviction cleanup, and identity-checked `browserSnapshotRef` lookup without
+      changing the public MCP surface.
+- [x] Replaced the waiter-only read pending map with bounded request lifecycle
+      records. Writer dequeue now commits dispatch, recomputes the extension
+      budget, skips cancelled/expired queued reads, preserves late-response method
+      validation, and closes admission during broker shutdown.
 
 ## Current state
 
@@ -111,9 +120,11 @@ Last updated: 2026-08-03
   and restart paths.
 - P2.0 snapshot boundary work now freezes the current MCP discovery schema and a
   normalized full snapshot result and covers retained cursor lifecycle failures.
-  Snapshot lookup by `browserSnapshotRef`, generalized retention, aggregate-byte
-  quota boundaries, remaining race coverage, client spikes, and live evidence
-  are still open.
+  Generalized retention, exact aggregate quota policy, and internal snapshot
+  lookup are implemented. The read transport now has explicit lifecycle and
+  flushed-dispatch accounting. Keyed broker-owned side-effect tasks, operation
+  overlap lanes, remaining race coverage, client spikes, and live evidence are
+  still open.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 

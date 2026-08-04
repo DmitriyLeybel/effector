@@ -1,11 +1,10 @@
 use std::{
-    collections::HashMap,
     fmt,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -28,7 +27,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, stdin, stdout},
     net::TcpListener,
     sync::{Semaphore, mpsc, oneshot},
-    time::timeout,
+    time::{Instant, timeout, timeout_at},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -41,23 +40,47 @@ use crate::{
         PROTOCOL_ABI_REVISION, ReadyAck, ResponseMessage, negotiate_implementations,
         parse_incoming,
     },
+    request_lifecycle::{RequestLifecycle, RequestWaiterGuard},
     runtime::BrokerRuntime,
     settings,
 };
 
 const MAX_PENDING_BROWSER_REQUESTS: usize = 128;
 const BROWSER_REQUEST_DEADLINE: Duration = Duration::from_secs(30);
-type Pending = Arc<Mutex<HashMap<String, PendingRequest>>>;
 
-struct PendingRequest {
-    method: BrowserMethod,
-    sender: oneshot::Sender<ResponseMessage>,
+enum NativeWriterMessage {
+    Payload(Vec<u8>),
+    Request {
+        request_id: String,
+        method: BrowserMethod,
+        params: Value,
+        broker_deadline: Instant,
+        written: oneshot::Sender<WriterOutcome>,
+    },
+}
+
+impl NativeWriterMessage {
+    fn untracked(payload: Vec<u8>) -> Self {
+        Self::Payload(payload)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum WriterOutcome {
+    Dispatched,
+    Cancelled,
+    Expired,
+}
+
+enum WaitFailure {
+    Deadline,
+    Request(BrowserRequestError),
 }
 
 #[derive(Clone)]
 pub(crate) struct BrowserRequestHandle {
-    native_tx: mpsc::Sender<Vec<u8>>,
-    pending: Pending,
+    native_tx: mpsc::Sender<NativeWriterMessage>,
+    lifecycle: RequestLifecycle,
     in_flight: Arc<Semaphore>,
     ready: Arc<AtomicBool>,
 }
@@ -78,23 +101,6 @@ impl fmt::Display for BrowserRequestError {
 }
 
 impl std::error::Error for BrowserRequestError {}
-
-struct PendingRequestGuard {
-    pending: Pending,
-    request_id: String,
-}
-
-impl Drop for PendingRequestGuard {
-    fn drop(&mut self) {
-        pending_requests(&self.pending).remove(&self.request_id);
-    }
-}
-
-fn pending_requests(pending: &Pending) -> MutexGuard<'_, HashMap<String, PendingRequest>> {
-    pending
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn browser_response_result(response: ResponseMessage) -> Result<Value, BrowserRequestError> {
     let ResponseMessage {
@@ -120,14 +126,15 @@ pub async fn run() -> Result<()> {
         .with_context(|| format!("bind Effector MCP endpoint at {}", settings.endpoint()))?;
     let endpoint = settings.endpoint();
 
-    let (native_tx, native_rx) = mpsc::channel::<Vec<u8>>(128);
-    let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+    let (native_tx, native_rx) = mpsc::channel::<NativeWriterMessage>(128);
+    let lifecycle = RequestLifecycle::default();
     let ready = Arc::new(AtomicBool::new(false));
     let runtime = BrokerRuntime::new();
+    let in_flight = Arc::new(Semaphore::new(MAX_PENDING_BROWSER_REQUESTS));
     let browser = BrowserRequestHandle {
         native_tx: native_tx.clone(),
-        pending: pending.clone(),
-        in_flight: Arc::new(Semaphore::new(MAX_PENDING_BROWSER_REQUESTS)),
+        lifecycle: lifecycle.clone(),
+        in_flight: in_flight.clone(),
         ready: ready.clone(),
     };
     let cancellation = CancellationToken::new();
@@ -156,9 +163,9 @@ pub async fn run() -> Result<()> {
         .nest_service("/mcp", service)
         .layer(middleware::from_fn_with_state(expected_token, authorize));
 
-    let mut writer = tokio::spawn(native_writer(native_rx));
+    let mut writer = tokio::spawn(native_writer(native_rx, lifecycle.clone(), ready.clone()));
     let mut reader = tokio::spawn(native_reader(
-        pending.clone(),
+        lifecycle.clone(),
         native_tx.clone(),
         endpoint,
         ready.clone(),
@@ -193,8 +200,9 @@ pub async fn run() -> Result<()> {
 
     cancellation.cancel();
     ready.store(false, Ordering::Release);
+    in_flight.close();
     runtime.clear();
-    pending_requests(&pending).clear();
+    lifecycle.clear();
     drop(native_tx);
 
     if !reader.is_finished() {
@@ -258,8 +266,8 @@ fn authorization_matches(value: &str, expected_token: &str) -> bool {
 }
 
 async fn native_reader(
-    pending: Pending,
-    native_tx: mpsc::Sender<Vec<u8>>,
+    lifecycle: RequestLifecycle,
+    native_tx: mpsc::Sender<NativeWriterMessage>,
     mcp_endpoint: String,
     ready: Arc<AtomicBool>,
     runtime: BrokerRuntime,
@@ -294,11 +302,16 @@ async fn native_reader(
                     bail!("Chrome extension response browser identity did not match ready");
                 }
                 let request_id = message.request_id.clone();
-                if let Some(pending) = pending_requests(&pending).remove(&request_id) {
-                    message.validate_for_method(pending.method)?;
-                    let _ = pending.sender.send(message);
-                } else if !message.artifacts.is_empty() {
-                    bail!("unmatched extension response included an artifact");
+                if let Some(matched) = lifecycle.take_response(&request_id) {
+                    message.validate_for_method(matched.method)?;
+                    if let Some(waiter) = matched.waiter {
+                        let _ = waiter.send(message);
+                    }
+                } else {
+                    // Every currently reachable method is a read with the same
+                    // response policy. Future operation records must outlive
+                    // their responses rather than using this fallback.
+                    message.validate_for_method(BrowserMethod::BrowserList)?;
                 }
             }
             IncomingMessage::Ready(message) => {
@@ -316,10 +329,10 @@ async fn native_reader(
                     mcp_endpoint: &mcp_endpoint,
                 };
                 native_tx
-                    .send(serialize_outgoing(
+                    .send(NativeWriterMessage::untracked(serialize_outgoing(
                         &acknowledgement,
                         MAX_HOST_TO_CHROME_BYTES,
-                    )?)
+                    )?))
                     .await
                     .context("queue ready acknowledgement")?;
                 ready.store(true, Ordering::Release);
@@ -333,14 +346,71 @@ async fn native_reader(
     }
 }
 
-async fn native_writer(mut messages: mpsc::Receiver<Vec<u8>>) -> Result<()> {
+async fn native_writer(
+    mut messages: mpsc::Receiver<NativeWriterMessage>,
+    lifecycle: RequestLifecycle,
+    ready: Arc<AtomicBool>,
+) -> Result<()> {
     let mut output = stdout();
-    while let Some(payload) = messages.recv().await {
+    while let Some(message) = messages.recv().await {
+        let (payload, request_id, written) = match message {
+            NativeWriterMessage::Payload(payload) => (payload, None, None),
+            NativeWriterMessage::Request {
+                request_id,
+                method,
+                params,
+                broker_deadline,
+                written,
+            } => {
+                if !ready.load(Ordering::Acquire) {
+                    let _ = written.send(WriterOutcome::Cancelled);
+                    continue;
+                }
+                let extension_budget = broker_deadline
+                    .saturating_duration_since(Instant::now())
+                    .saturating_sub(Duration::from_secs(1));
+                if extension_budget.is_zero() {
+                    let _ = written.send(WriterOutcome::Expired);
+                    continue;
+                }
+                let policy = method.policy();
+                let deadline_ms = u32::try_from(extension_budget.as_millis())
+                    .unwrap_or(u32::MAX)
+                    .min(policy.deadline_ms);
+                if deadline_ms == 0 {
+                    let _ = written.send(WriterOutcome::Expired);
+                    continue;
+                }
+                if !lifecycle.begin_dispatch(&request_id) {
+                    let _ = written.send(WriterOutcome::Cancelled);
+                    continue;
+                }
+                let request = BrowserRequest {
+                    message_type: "request",
+                    request_id: &request_id,
+                    method: method.as_str(),
+                    params,
+                    request_class: policy.request_class,
+                    deadline_ms,
+                };
+                (
+                    serialize_outgoing(&request, MAX_PRODUCT_REQUEST_BYTES)?,
+                    Some(request_id),
+                    Some(written),
+                )
+            }
+        };
         output
             .write_all(&(payload.len() as u32).to_ne_bytes())
             .await?;
         output.write_all(&payload).await?;
         output.flush().await?;
+        if let Some(request_id) = request_id.as_deref() {
+            lifecycle.mark_dispatched(request_id);
+        }
+        if let Some(written) = written {
+            let _ = written.send(WriterOutcome::Dispatched);
+        }
     }
     Ok(())
 }
@@ -368,64 +438,110 @@ impl BrowserRequestHandle {
             ));
         }
 
-        let operation = async {
-            let started = Instant::now();
-            let _permit = self.in_flight.clone().acquire_owned().await.map_err(|_| {
+        let deadline = Instant::now() + BROWSER_REQUEST_DEADLINE;
+        let permit = timeout_at(deadline, self.in_flight.clone().acquire_owned())
+            .await
+            .map_err(|_| {
+                BrowserRequestError::Infrastructure(
+                    "browser request capacity was not available before the deadline".to_owned(),
+                )
+            })?
+            .map_err(|_| {
                 BrowserRequestError::Infrastructure(
                     "browser request capacity is unavailable".to_owned(),
                 )
             })?;
-            let extension_budget = BROWSER_REQUEST_DEADLINE
-                .saturating_sub(started.elapsed())
-                .saturating_sub(Duration::from_secs(1));
-            if extension_budget.is_zero() {
-                return Err(BrowserRequestError::Infrastructure(
-                    "browser request capacity was not available before the deadline".to_owned(),
-                ));
-            }
-            let policy = method.policy();
-            let deadline_ms = u32::try_from(extension_budget.as_millis())
-                .unwrap_or(u32::MAX)
-                .min(policy.deadline_ms);
-            let request_id = Uuid::new_v4().to_string();
-            let request = BrowserRequest {
-                message_type: "request",
-                request_id: &request_id,
-                method: method.as_str(),
-                params,
-                request_class: policy.request_class,
-                deadline_ms,
-            };
-            let payload = serialize_outgoing(&request, MAX_PRODUCT_REQUEST_BYTES)
-                .map_err(|error| BrowserRequestError::Infrastructure(error.to_string()))?;
-            let (sender, receiver) = oneshot::channel();
-            pending_requests(&self.pending)
-                .insert(request_id.clone(), PendingRequest { method, sender });
-            let _pending_guard = PendingRequestGuard {
-                pending: self.pending.clone(),
-                request_id,
-            };
+        if !self.ready.load(Ordering::Acquire) {
+            return Err(BrowserRequestError::Infrastructure(
+                "Chrome extension disconnected".to_owned(),
+            ));
+        }
+        let extension_budget = deadline
+            .saturating_duration_since(Instant::now())
+            .saturating_sub(Duration::from_secs(1));
+        if extension_budget.is_zero() {
+            return Err(BrowserRequestError::Infrastructure(
+                "browser request capacity was not available before the deadline".to_owned(),
+            ));
+        }
+        let policy = method.policy();
+        let deadline_ms = u32::try_from(extension_budget.as_millis())
+            .unwrap_or(u32::MAX)
+            .min(policy.deadline_ms);
+        let request_id = Uuid::new_v4().to_string();
+        let preflight_request = BrowserRequest {
+            message_type: "request",
+            request_id: &request_id,
+            method: method.as_str(),
+            params: params.clone(),
+            request_class: policy.request_class,
+            deadline_ms,
+        };
+        serialize_outgoing(&preflight_request, MAX_PRODUCT_REQUEST_BYTES)
+            .map_err(|error| BrowserRequestError::Infrastructure(error.to_string()))?;
+        let (response_tx, response_rx) = oneshot::channel();
+        self.lifecycle
+            .register(request_id.clone(), method, response_tx)
+            .map_err(|error| BrowserRequestError::Infrastructure(error.to_owned()))?;
+        let mut waiter_guard = RequestWaiterGuard::new(self.lifecycle.clone(), request_id.clone());
+        let (written_tx, written_rx) = oneshot::channel();
 
-            if self.native_tx.send(payload).await.is_err() {
-                return Err(BrowserRequestError::Infrastructure(
-                    "Chrome extension disconnected".to_owned(),
-                ));
+        let waiting = async {
+            self.native_tx
+                .send(NativeWriterMessage::Request {
+                    request_id: request_id.clone(),
+                    method,
+                    params,
+                    broker_deadline: deadline,
+                    written: written_tx,
+                })
+                .await
+                .map_err(|_| {
+                    WaitFailure::Request(BrowserRequestError::Infrastructure(
+                        "Chrome extension disconnected".to_owned(),
+                    ))
+                })?;
+            let mut written_rx = written_rx;
+            let mut response_rx = response_rx;
+            tokio::select! {
+                biased;
+                response = &mut response_rx => response
+                    .map_err(|_| WaitFailure::Request(BrowserRequestError::Infrastructure(
+                        "Chrome extension disconnected before replying".to_owned(),
+                    )))
+                    .and_then(|response| browser_response_result(response).map_err(WaitFailure::Request)),
+                written = &mut written_rx => match written {
+                    Ok(WriterOutcome::Dispatched) => response_rx
+                        .await
+                        .map_err(|_| WaitFailure::Request(BrowserRequestError::Infrastructure(
+                            "Chrome extension disconnected before replying".to_owned(),
+                        )))
+                        .and_then(|response| browser_response_result(response).map_err(WaitFailure::Request)),
+                    Ok(WriterOutcome::Cancelled) => Err(WaitFailure::Request(
+                        BrowserRequestError::Infrastructure(
+                            "browser request was cancelled before dispatch".to_owned(),
+                        ),
+                    )),
+                    Ok(WriterOutcome::Expired) => Err(WaitFailure::Deadline),
+                    Err(_) => Err(WaitFailure::Request(BrowserRequestError::Infrastructure(
+                        "Chrome extension disconnected while dispatching".to_owned(),
+                    ))),
+                }
             }
-
-            let response = receiver.await.map_err(|_| {
-                BrowserRequestError::Infrastructure(
-                    "Chrome extension disconnected before replying".to_owned(),
-                )
-            })?;
-            browser_response_result(response)
         };
 
-        match timeout(BROWSER_REQUEST_DEADLINE, operation).await {
-            Ok(result) => result,
-            Err(_) => Err(BrowserRequestError::Infrastructure(
-                "Chrome extension did not reply before the deadline".to_owned(),
-            )),
-        }
+        let result = match timeout_at(deadline, waiting).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(WaitFailure::Request(error))) => Err(error),
+            Ok(Err(WaitFailure::Deadline)) | Err(_) => {
+                waiter_guard.timed_out();
+                Err(BrowserRequestError::Infrastructure(
+                    "Chrome extension did not reply before the deadline".to_owned(),
+                ))
+            }
+        };
+        drop(permit);
+        result
     }
 }
 
