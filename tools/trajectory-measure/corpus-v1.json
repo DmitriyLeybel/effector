@@ -1,0 +1,398 @@
+{
+  "schemaRevision": "trajectory-measure/v2",
+  "corpusRevision": "p3-0-synthetic-v2",
+  "status": "proposed-non-executable",
+  "command": "cargo run --locked --manifest-path tools/trajectory-measure/Cargo.toml -- check",
+  "tokenizer": {
+    "crateName": "tiktoken-rs",
+    "crateVersion": "0.12.0",
+    "encoding": "o200k_base",
+    "mode": "ordinary",
+    "operation": "tiktoken_rs::o200k_base()?.count_ordinary(rendered)"
+  },
+  "scopeLock": {
+    "targetTools": ["browser.snapshot", "browser.change", "page.inspect", "page.act", "page.evaluate"],
+    "newPermission": false,
+    "newTrustBoundary": false,
+    "newPolicyLayer": false,
+    "implementationAuthority": "Part 2",
+    "confirmDestructive": "rejected",
+    "automaticActivation": "rejected"
+  },
+  "workflowClasses": ["stable-form", "off-viewport", "spa-settling", "active-visual", "inactive-visual-recovery", "browser-organization"],
+  "discovery": {
+    "profiles": {
+      "core": ["browser.snapshot", "browser.change"],
+      "page": ["browser.snapshot", "browser.change", "page.inspect", "page.act"],
+      "all-five": ["browser.snapshot", "browser.change", "page.inspect", "page.act", "page.evaluate"],
+      "migration": ["browser.snapshot", "browser.change", "page.inspect", "page.act", "page.evaluate", "browser.list", "tabs.list"]
+    },
+    "common": {
+      "browser.snapshot": {
+        "name": "browser.snapshot",
+        "description": "Return a bounded browser hierarchy snapshot without activating or waking tabs.",
+        "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+        "inputSchema": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "windowRef": {"type": "string", "minLength": 1}, "groupRef": {"type": "string", "minLength": 1},
+            "tabRefs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "active": {"type": "boolean"}, "pinned": {"type": "boolean"}, "discarded": {"type": "boolean"}, "frozen": {"type": "boolean"},
+            "query": {"type": "string", "minLength": 1}, "detail": {"enum": ["counts", "compact", "full"]},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 250}, "cursor": {"type": "string", "minLength": 1}
+          },
+          "allOf": [
+            {"not": {"required": ["windowRef", "groupRef"]}}, {"not": {"required": ["windowRef", "tabRefs"]}}, {"not": {"required": ["groupRef", "tabRefs"]}},
+            {"if": {"required": ["cursor"]}, "then": {"required": ["cursor"], "maxProperties": 1}},
+            {"if": {"properties": {"detail": {"const": "counts"}}, "required": ["detail"]}, "then": {"not": {"anyOf": [{"required": ["cursor"]}, {"required": ["limit"]}]}}}
+          ]
+        },
+        "outputSchema": {
+          "$defs": {
+            "tab": {"type": "object", "additionalProperties": false, "required": ["ref"], "properties": {"ref": {"type": "string"}, "title": {"type": "string"}, "url": {"type": "string"}, "active": {"const": true}, "pinned": {"const": true}, "discarded": {"const": true}, "frozen": {"type": "boolean"}, "pendingUrl": {"type": "string"}, "highlighted": {"type": "boolean"}, "audible": {"type": "boolean"}, "muted": {"type": "boolean"}, "loading": {"type": "boolean"}, "autoDiscardable": {"type": "boolean"}, "lastAccessed": {"type": "number"}, "openerRef": {"type": "string"}, "favIconUrl": {"type": "string"}}},
+            "group": {"type": "object", "additionalProperties": false, "required": ["ref", "color"], "properties": {"ref": {"type": "string"}, "title": {"type": "string"}, "color": {"type": "string"}, "partial": {"const": true}, "collapsed": {"type": "boolean"}, "shared": {"type": "boolean"}}},
+            "groupItem": {"type": "object", "additionalProperties": false, "required": ["group", "tabs"], "properties": {"group": {"$ref": "#/$defs/group"}, "tabs": {"type": "array", "items": {"$ref": "#/$defs/tab"}}}},
+            "window": {"type": "object", "additionalProperties": false, "required": ["ref", "items"], "properties": {"ref": {"type": "string"}, "focused": {"const": true}, "partial": {"const": true}, "items": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/tab"}, {"$ref": "#/$defs/groupItem"}]}}, "top": {"type": "integer"}, "left": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "type": {"type": "string"}, "state": {"type": "string"}, "alwaysOnTop": {"type": "boolean"}}}
+          },
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["windowCount", "groupCount", "tabCount", "discardedTabCount"], "properties": {"windowCount": {"type": "integer", "minimum": 0}, "groupCount": {"type": "integer", "minimum": 0}, "tabCount": {"type": "integer", "minimum": 0}, "discardedTabCount": {"type": "integer", "minimum": 0}}},
+            {"type": "object", "additionalProperties": false, "required": ["browserSnapshotRef", "capturedAt", "totalMatched", "windows", "nextCursor"], "properties": {"browserSnapshotRef": {"type": "string"}, "capturedAt": {"type": "string"}, "totalMatched": {"type": "integer", "minimum": 0}, "windows": {"type": "array", "items": {"$ref": "#/$defs/window"}}, "nextCursor": {"type": ["string", "null"]}}}
+          ]
+        }
+      },
+      "browser.change": {
+        "name": "browser.change",
+        "description": "Preview or apply a bounded exact browser-organization plan.",
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false},
+        "inputSchema": {
+          "$defs": {
+            "refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "tabOpen": {"type": "object", "additionalProperties": false, "required": ["type", "url"], "properties": {"type": {"const": "tab.open"}, "url": {"type": "string", "pattern": "^(https?://|about:blank$)"}, "windowRef": {"type": "string"}, "groupRef": {"type": "string"}, "index": {"type": "integer", "minimum": 0}, "active": {"type": "boolean"}, "pinned": {"type": "boolean"}}},
+            "tabClose": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "tab.close"}, "tabRefs": {"$ref": "#/$defs/refs"}}},
+            "tabMove": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "tab.move"}, "tabRefs": {"$ref": "#/$defs/refs"}, "windowRef": {"type": "string"}, "groupRef": {"type": ["string", "null"]}, "index": {"type": "integer", "minimum": 0}}, "anyOf": [{"required": ["windowRef"]}, {"required": ["groupRef"]}, {"required": ["index"]}]},
+            "tabUpdate": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "tab.update"}, "tabRefs": {"$ref": "#/$defs/refs"}, "pinned": {"type": "boolean"}, "muted": {"type": "boolean"}, "autoDiscardable": {"type": "boolean"}}, "anyOf": [{"required": ["pinned"]}, {"required": ["muted"]}, {"required": ["autoDiscardable"]}]},
+            "tabActivate": {"type": "object", "additionalProperties": false, "required": ["type", "tabRef"], "properties": {"type": {"const": "tab.activate"}, "tabRef": {"type": "string"}, "focusWindow": {"type": "boolean"}}},
+            "tabDuplicate": {"type": "object", "additionalProperties": false, "required": ["type", "tabRef"], "properties": {"type": {"const": "tab.duplicate"}, "tabRef": {"type": "string"}}},
+            "tabDiscard": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "tab.discard"}, "tabRefs": {"$ref": "#/$defs/refs"}}},
+            "tabReload": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "tab.reload"}, "tabRefs": {"$ref": "#/$defs/refs"}, "bypassCache": {"type": "boolean"}}},
+            "groupCreate": {"type": "object", "additionalProperties": false, "required": ["type", "tabRefs"], "properties": {"type": {"const": "group.create"}, "tabRefs": {"$ref": "#/$defs/refs"}, "title": {"type": "string"}, "color": {"type": "string"}, "collapsed": {"type": "boolean"}}},
+            "groupUpdate": {"type": "object", "additionalProperties": false, "required": ["type", "groupRef"], "properties": {"type": {"const": "group.update"}, "groupRef": {"type": "string"}, "title": {"type": "string"}, "color": {"type": "string"}, "collapsed": {"type": "boolean"}}, "anyOf": [{"required": ["title"]}, {"required": ["color"]}, {"required": ["collapsed"]}]},
+            "groupMove": {"type": "object", "additionalProperties": false, "required": ["type", "groupRef", "windowRef", "index"], "properties": {"type": {"const": "group.move"}, "groupRef": {"type": "string"}, "windowRef": {"type": "string"}, "index": {"type": "integer", "minimum": 0}}},
+            "windowCreate": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "window.create"}, "tabRefs": {"$ref": "#/$defs/refs"}, "focused": {"type": "boolean"}}},
+            "windowUpdate": {"type": "object", "additionalProperties": false, "required": ["type", "windowRef"], "properties": {"type": {"const": "window.update"}, "windowRef": {"type": "string"}, "left": {"type": "integer"}, "top": {"type": "integer"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "state": {"enum": ["normal", "minimized", "maximized", "fullscreen"]}, "focused": {"type": "boolean"}, "drawAttention": {"type": "boolean"}}, "anyOf": [{"required": ["left"]}, {"required": ["top"]}, {"required": ["width"]}, {"required": ["height"]}, {"required": ["state"]}, {"required": ["focused"]}, {"required": ["drawAttention"]}]},
+            "windowClose": {"type": "object", "additionalProperties": false, "required": ["type", "windowRef"], "properties": {"type": {"const": "window.close"}, "windowRef": {"type": "string"}}},
+            "operation": {"oneOf": [{"$ref": "#/$defs/tabOpen"}, {"$ref": "#/$defs/tabClose"}, {"$ref": "#/$defs/tabMove"}, {"$ref": "#/$defs/tabUpdate"}, {"$ref": "#/$defs/tabActivate"}, {"$ref": "#/$defs/tabDuplicate"}, {"$ref": "#/$defs/tabDiscard"}, {"$ref": "#/$defs/tabReload"}, {"$ref": "#/$defs/groupCreate"}, {"$ref": "#/$defs/groupUpdate"}, {"$ref": "#/$defs/groupMove"}, {"$ref": "#/$defs/windowCreate"}, {"$ref": "#/$defs/windowUpdate"}, {"$ref": "#/$defs/windowClose"}]}
+          },
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["mode", "browserSnapshotRef", "operations"], "properties": {"mode": {"const": "preview"}, "browserSnapshotRef": {"type": "string"}, "operations": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"$ref": "#/$defs/operation"}}, "stopOnError": {"type": "boolean"}}},
+            {"type": "object", "additionalProperties": false, "required": ["mode", "planRef"], "properties": {"mode": {"const": "apply"}, "planRef": {"type": "string"}}}
+          ]
+        },
+        "outputSchema": {
+          "$defs": {"error": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}, "operationResult": {"type": "object", "additionalProperties": false, "required": ["index", "status"], "properties": {"index": {"type": "integer", "minimum": 0}, "status": {"enum": ["applied", "partial", "failed", "skipped", "unknown"]}, "createdRef": {"type": "string"}, "error": {"$ref": "#/$defs/error"}}}},
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["planRef", "summary", "expiresAt"], "properties": {"planRef": {"type": "string"}, "summary": {"type": "string"}, "destructive": {"const": true}, "warnings": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}, "expiresAt": {"type": "string"}}},
+            {"type": "object", "additionalProperties": false, "required": ["status", "results"], "properties": {"status": {"enum": ["applied", "partial", "unknown"]}, "results": {"type": "array", "items": {"$ref": "#/$defs/operationResult"}}, "browserSnapshotRef": {"type": "string"}}}
+          ]
+        }
+      },
+      "page.inspect": {
+        "name": "page.inspect",
+        "description": "Return bounded semantics, active viewport metadata, or both without changing activation.",
+        "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+        "inputSchema": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"tabRef": {"type": "string"}, "documentRef": {"type": "string"}, "elementRef": {"type": "string"}, "cursor": {"type": "string"}, "view": {"enum": ["semantic", "visual", "both"]}, "scope": {"enum": ["auto", "viewport", "document"]}, "detail": {"enum": ["compact", "full"]}, "frames": {"enum": ["main", "all"]}},
+          "oneOf": [{"required": ["tabRef"]}, {"required": ["documentRef"]}, {"required": ["elementRef"]}, {"required": ["cursor"]}],
+          "allOf": [
+            {"if": {"properties": {"view": {"const": "visual"}}, "required": ["view"]}, "then": {"properties": {"scope": {"enum": ["auto", "viewport"]}}, "not": {"anyOf": [{"required": ["elementRef"]}, {"required": ["cursor"]}, {"required": ["detail"]}, {"required": ["frames"]}]}}},
+            {"if": {"properties": {"view": {"const": "both"}}, "required": ["view"]}, "then": {"properties": {"scope": {"enum": ["auto", "viewport"]}}, "not": {"anyOf": [{"required": ["elementRef"]}, {"required": ["cursor"]}]}}}
+          ]
+        },
+        "outputSchema": {
+          "$defs": {
+            "element": {"type": "object", "additionalProperties": false, "required": ["ref", "role"], "properties": {"ref": {"type": "string"}, "role": {"type": "string"}, "name": {"type": "string"}, "value": {}, "disabled": {"const": true}, "checked": {"type": "boolean"}, "selected": {"type": "boolean"}, "expanded": {"type": "boolean"}}},
+            "semantic": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}}},
+            "visual": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}},
+            "both": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}}
+          },
+          "oneOf": [{"$ref": "#/$defs/semantic"}, {"$ref": "#/$defs/visual"}, {"$ref": "#/$defs/both"}]
+        }
+      },
+      "page.evaluate": {
+        "name": "page.evaluate",
+        "description": "Run size-limited isolated evaluation against one exact loaded document.",
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true},
+        "inputSchema": {"type": "object", "additionalProperties": false, "required": ["documentRef", "code"], "properties": {"documentRef": {"type": "string"}, "code": {"type": "string", "minLength": 1}, "args": {"type": "array"}, "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 10000}}},
+        "outputSchema": {"oneOf": [{"type": "object", "additionalProperties": false, "required": ["value"], "properties": {"value": {}}}, {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"const": "unknown"}}}]}
+      },
+      "browser.list": {
+        "name": "browser.list", "description": "Migration-only browser metadata listing.",
+        "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+        "inputSchema": {"type": "object", "additionalProperties": false},
+        "outputSchema": {"type": "object", "additionalProperties": false, "required": ["browserInstanceId", "extensionId", "extensionVersion", "connectedAt", "summary"], "properties": {"browserInstanceId": {"type": "string"}, "extensionId": {"type": "string"}, "extensionVersion": {"type": "string"}, "connectedAt": {"type": "string"}, "summary": {"type": "object", "additionalProperties": false, "required": ["windowCount", "groupCount", "tabCount", "discardedTabCount"], "properties": {"windowCount": {"type": "integer", "minimum": 0}, "groupCount": {"type": "integer", "minimum": 0}, "tabCount": {"type": "integer", "minimum": 0}, "discardedTabCount": {"type": "integer", "minimum": 0}}}}}
+      },
+      "tabs.list": {
+        "name": "tabs.list", "description": "Migration-only filtered live tab metadata page.",
+        "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
+        "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"windowId": {"type": "integer"}, "groupId": {"type": "integer", "minimum": -1}, "activeOnly": {"type": "boolean"}, "discardedOnly": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 0, "maximum": 250}, "cursor": {"type": "integer", "minimum": 0}}},
+        "outputSchema": {"$defs": {"window": {"type": "object", "additionalProperties": false, "required": ["id", "focused"], "properties": {"id": {"type": "integer"}, "focused": {"type": "boolean"}, "top": {"type": "integer"}, "left": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "incognito": {"type": "boolean"}, "type": {"type": "string"}, "state": {"type": "string"}, "alwaysOnTop": {"type": "boolean"}}}, "group": {"type": "object", "additionalProperties": false, "required": ["id", "windowId", "title", "color", "collapsed"], "properties": {"id": {"type": "integer"}, "windowId": {"type": "integer"}, "title": {"type": "string"}, "color": {"type": "string"}, "collapsed": {"type": "boolean"}, "shared": {"type": "boolean"}}}, "mutedInfo": {"type": "object", "additionalProperties": false, "required": ["muted"], "properties": {"muted": {"type": "boolean"}, "reason": {"enum": ["user", "capture", "extension"]}, "extensionId": {"type": "string"}}}, "tab": {"type": "object", "additionalProperties": false, "required": ["id", "windowId", "index", "groupId", "active", "pinned", "discarded"], "properties": {"id": {"type": "integer"}, "windowId": {"type": "integer"}, "index": {"type": "integer", "minimum": 0}, "groupId": {"type": "integer"}, "title": {"type": "string"}, "url": {"type": "string"}, "pendingUrl": {"type": "string"}, "active": {"type": "boolean"}, "highlighted": {"type": "boolean"}, "pinned": {"type": "boolean"}, "audible": {"type": "boolean"}, "mutedInfo": {"$ref": "#/$defs/mutedInfo"}, "status": {"type": "string"}, "discarded": {"type": "boolean"}, "frozen": {"type": "boolean"}, "autoDiscardable": {"type": "boolean"}, "incognito": {"type": "boolean"}, "lastAccessed": {"type": "number"}, "openerTabId": {"type": "integer"}, "favIconUrl": {"type": "string"}}}}, "type": "object", "additionalProperties": false, "required": ["browserInstanceId", "capturedAt", "totalMatched", "cursor", "limit", "nextCursor", "windows", "groups", "tabs"], "properties": {"browserInstanceId": {"type": "string"}, "capturedAt": {"type": "string"}, "totalMatched": {"type": "integer", "minimum": 0}, "cursor": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 250}, "nextCursor": {"type": ["integer", "null"]}, "tabs": {"type": "array", "items": {"$ref": "#/$defs/tab"}}, "windows": {"type": "array", "items": {"$ref": "#/$defs/window"}}, "groups": {"type": "array", "items": {"$ref": "#/$defs/group"}}}}
+      }
+    },
+    "pageAct": {
+      "singular": {
+        "name": "page.act", "description": "Perform exact structured page action work and optionally inspect afterward.",
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false},
+        "inputSchema": {
+          "$defs": {
+            "click": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "click"}, "elementRef": {"type": "string"}, "button": {"const": "primary"}, "clickCount": {"const": 1}}},
+            "fill": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "text"], "properties": {"type": {"const": "fill"}, "elementRef": {"type": "string"}, "text": {"type": "string"}, "mode": {"enum": ["replace", "append"]}}},
+            "select": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "values"], "properties": {"type": {"const": "select"}, "elementRef": {"type": "string"}, "values": {"type": "array", "minItems": 1, "items": {"type": "string"}}}},
+            "check": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "checked"], "properties": {"type": {"const": "check"}, "elementRef": {"type": "string"}, "checked": {"type": "boolean"}}},
+            "scrollElement": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "scroll"}, "elementRef": {"type": "string"}}},
+            "scrollDocument": {"type": "object", "additionalProperties": false, "required": ["type", "direction", "amount"], "properties": {"type": {"const": "scroll"}, "direction": {"enum": ["up", "down", "left", "right"]}, "amount": {"type": "integer", "minimum": 1}}},
+            "focus": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "focus"}, "elementRef": {"type": "string"}}},
+            "navigate": {"type": "object", "additionalProperties": false, "required": ["type", "url"], "properties": {"type": {"const": "navigate"}, "url": {"type": "string", "pattern": "^(https?://|about:blank$)"}}},
+            "back": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "back"}}},
+            "forward": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "forward"}}},
+            "reload": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "reload"}, "bypassCache": {"type": "boolean"}}},
+            "action": {"oneOf": [{"$ref": "#/$defs/click"}, {"$ref": "#/$defs/fill"}, {"$ref": "#/$defs/select"}, {"$ref": "#/$defs/check"}, {"$ref": "#/$defs/scrollElement"}, {"$ref": "#/$defs/scrollDocument"}, {"$ref": "#/$defs/focus"}, {"$ref": "#/$defs/navigate"}, {"$ref": "#/$defs/back"}, {"$ref": "#/$defs/forward"}, {"$ref": "#/$defs/reload"}]}
+          },
+          "type": "object", "additionalProperties": false, "required": ["documentRef", "action"],
+          "properties": {"documentRef": {"type": "string"}, "action": {"$ref": "#/$defs/action"}, "wait": {"enum": ["auto", "none"]}, "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 30000}, "inspectAfter": {"enum": ["semantic", "visual", "both"]}}
+        },
+        "outputSchema": {
+          "$defs": {"error": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}, "element": {"type": "object", "additionalProperties": false, "required": ["ref", "role"], "properties": {"ref": {"type": "string"}, "role": {"type": "string"}, "name": {"type": "string"}, "value": {}, "disabled": {"const": true}, "checked": {"type": "boolean"}, "selected": {"type": "boolean"}, "expanded": {"type": "boolean"}}}, "semantic": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}}}, "visual": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}}, "both": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}}, "inspection": {"oneOf": [{"$ref": "#/$defs/semantic"}, {"$ref": "#/$defs/visual"}, {"$ref": "#/$defs/both"}]}},
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["documentRef"], "properties": {"documentRef": {"type": "string"}, "inspection": {"$ref": "#/$defs/inspection"}, "inspectionError": {"$ref": "#/$defs/error"}}},
+            {"type": "object", "additionalProperties": false, "required": ["waitError"], "properties": {"waitError": {"$ref": "#/$defs/error"}, "documentRef": {"type": "string"}}},
+            {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"const": "unknown"}, "documentRef": {"type": "string"}}}
+          ]
+        }
+      },
+      "bounded": {
+        "name": "page.act", "description": "Perform exact structured page action work and optionally inspect afterward.",
+        "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false},
+        "inputSchema": {
+          "$defs": {
+            "click": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "click"}, "elementRef": {"type": "string"}, "button": {"const": "primary"}, "clickCount": {"const": 1}}},
+            "fill": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "text"], "properties": {"type": {"const": "fill"}, "elementRef": {"type": "string"}, "text": {"type": "string"}, "mode": {"enum": ["replace", "append"]}}},
+            "select": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "values"], "properties": {"type": {"const": "select"}, "elementRef": {"type": "string"}, "values": {"type": "array", "minItems": 1, "items": {"type": "string"}}}},
+            "check": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef", "checked"], "properties": {"type": {"const": "check"}, "elementRef": {"type": "string"}, "checked": {"type": "boolean"}}},
+            "scrollElement": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "scroll"}, "elementRef": {"type": "string"}}},
+            "scrollDocument": {"type": "object", "additionalProperties": false, "required": ["type", "direction", "amount"], "properties": {"type": {"const": "scroll"}, "direction": {"enum": ["up", "down", "left", "right"]}, "amount": {"type": "integer", "minimum": 1}}},
+            "focus": {"type": "object", "additionalProperties": false, "required": ["type", "elementRef"], "properties": {"type": {"const": "focus"}, "elementRef": {"type": "string"}}},
+            "navigate": {"type": "object", "additionalProperties": false, "required": ["type", "url"], "properties": {"type": {"const": "navigate"}, "url": {"type": "string", "pattern": "^(https?://|about:blank$)"}}},
+            "back": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "back"}}},
+            "forward": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "forward"}}},
+            "reload": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "reload"}, "bypassCache": {"type": "boolean"}}},
+            "action": {"oneOf": [{"$ref": "#/$defs/click"}, {"$ref": "#/$defs/fill"}, {"$ref": "#/$defs/select"}, {"$ref": "#/$defs/check"}, {"$ref": "#/$defs/scrollElement"}, {"$ref": "#/$defs/scrollDocument"}, {"$ref": "#/$defs/focus"}, {"$ref": "#/$defs/navigate"}, {"$ref": "#/$defs/back"}, {"$ref": "#/$defs/forward"}, {"$ref": "#/$defs/reload"}]}
+          },
+          "type": "object", "additionalProperties": false, "required": ["documentRef", "actions"],
+          "properties": {"documentRef": {"type": "string"}, "actions": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/action"}}, "wait": {"enum": ["auto", "none"]}, "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 30000}, "inspectAfter": {"enum": ["semantic", "visual", "both"]}}
+        },
+        "outputSchema": {
+          "$defs": {"error": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string"}, "message": {"type": "string"}}}, "element": {"type": "object", "additionalProperties": false, "required": ["ref", "role"], "properties": {"ref": {"type": "string"}, "role": {"type": "string"}, "name": {"type": "string"}, "value": {}, "disabled": {"const": true}, "checked": {"type": "boolean"}, "selected": {"type": "boolean"}, "expanded": {"type": "boolean"}}}, "semantic": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}}}, "visual": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}}, "both": {"type": "object", "additionalProperties": false, "required": ["pageSnapshotRef", "documentRef", "text", "elements", "nextCursor", "width", "height", "scrollX", "scrollY", "mimeType"], "properties": {"pageSnapshotRef": {"type": "string"}, "documentRef": {"type": "string"}, "url": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}, "headings": {"type": "array", "items": {"type": "string"}}, "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}, "nextCursor": {"type": ["string", "null"]}, "width": {"type": "integer", "minimum": 1}, "height": {"type": "integer", "minimum": 1}, "scrollX": {"type": "integer"}, "scrollY": {"type": "integer"}, "mimeType": {"const": "image/png"}}}, "inspection": {"oneOf": [{"$ref": "#/$defs/semantic"}, {"$ref": "#/$defs/visual"}, {"$ref": "#/$defs/both"}]}},
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["documentRef"], "properties": {"documentRef": {"type": "string"}, "inspection": {"$ref": "#/$defs/inspection"}, "inspectionError": {"$ref": "#/$defs/error"}}},
+            {"type": "object", "additionalProperties": false, "required": ["waitError"], "properties": {"waitError": {"$ref": "#/$defs/error"}, "documentRef": {"type": "string"}}},
+            {"type": "object", "additionalProperties": false, "required": ["status", "completedActions", "failedActionIndex", "error", "documentRef"], "properties": {"status": {"const": "partial"}, "completedActions": {"type": "integer", "minimum": 1, "maximum": 2}, "failedActionIndex": {"type": "integer", "minimum": 1, "maximum": 2}, "error": {"$ref": "#/$defs/error"}, "documentRef": {"type": "string"}}},
+            {"type": "object", "additionalProperties": false, "required": ["status"], "dependentRequired": {"completedActions": ["uncertainActionIndex"], "uncertainActionIndex": ["completedActions"]}, "properties": {"status": {"const": "unknown"}, "completedActions": {"type": "integer", "minimum": 0, "maximum": 2}, "uncertainActionIndex": {"type": "integer", "minimum": 0, "maximum": 2}, "documentRef": {"type": "string"}}}
+          ]
+        }
+      }
+    }
+  },
+  "trajectories": [
+    {
+      "id": "stable_form_success", "workflowClass": "stable-form", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"documentRef": "doc_sf", "inspection": {"pageSnapshotRef": "ps_sf1", "documentRef": "doc_sf", "text": "Saved state observed", "elements": [], "nextCursor": null}},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "sf-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sf", "view": "semantic"}, "structuredContent": {"pageSnapshotRef": "ps_sf0", "documentRef": "doc_sf", "text": "Form ready", "elements": [{"ref": "el_name", "role": "textbox", "name": "Synthetic name"}, {"ref": "el_terms", "role": "checkbox", "name": "Synthetic terms"}, {"ref": "el_save", "role": "button", "name": "Synthetic save"}], "nextCursor": null}, "summary": "Synthetic form inspected.", "dispatch": "extension"},
+          {"id": "sf-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_sf", "action": {"type": "fill", "elementRef": "el_name", "text": "Synthetic value"}}, "structuredContent": {"documentRef": "doc_sf"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sf-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_sf", "action": {"type": "check", "elementRef": "el_terms", "checked": true}}, "structuredContent": {"documentRef": "doc_sf"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sf-s-4", "tool": "page.act", "arguments": {"documentRef": "doc_sf", "action": {"type": "click", "elementRef": "el_save"}, "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sf", "inspection": {"pageSnapshotRef": "ps_sf1", "documentRef": "doc_sf", "text": "Saved state observed", "elements": [], "nextCursor": null}}, "summary": "Action and inspection completed.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "sf-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sf", "view": "semantic"}, "structuredContent": {"pageSnapshotRef": "ps_sf0", "documentRef": "doc_sf", "text": "Form ready", "elements": [{"ref": "el_name", "role": "textbox", "name": "Synthetic name"}, {"ref": "el_terms", "role": "checkbox", "name": "Synthetic terms"}, {"ref": "el_save", "role": "button", "name": "Synthetic save"}], "nextCursor": null}, "summary": "Synthetic form inspected.", "dispatch": "extension"},
+          {"id": "sf-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_sf", "actions": [{"type": "fill", "elementRef": "el_name", "text": "Synthetic value"}, {"type": "check", "elementRef": "el_terms", "checked": true}, {"type": "click", "elementRef": "el_save"}], "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sf", "inspection": {"pageSnapshotRef": "ps_sf1", "documentRef": "doc_sf", "text": "Saved state observed", "elements": [], "nextCursor": null}}, "summary": "Actions and inspection completed.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "stable_form_rerender_stale_partial_recovery", "workflowClass": "stable-form", "weight": 1, "kind": "recovery", "recoveryOf": "stable_form_success",
+      "expectedTerminal": {"documentRef": "doc_sr", "inspection": {"pageSnapshotRef": "ps_sr2", "documentRef": "doc_sr", "text": "Saved after explicit replacement inspection", "elements": [], "nextCursor": null}},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "sr-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sr"}, "structuredContent": {"pageSnapshotRef": "ps_sr0", "documentRef": "doc_sr", "text": "Original controls", "elements": [{"ref": "el_name", "role": "textbox"}, {"ref": "el_terms", "role": "checkbox", "name": "Old terms"}, {"ref": "el_save", "role": "button", "name": "Old save"}], "nextCursor": null}, "summary": "Synthetic form inspected.", "dispatch": "extension"},
+          {"id": "sr-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "action": {"type": "fill", "elementRef": "el_name", "text": "Synthetic value"}}, "structuredContent": {"documentRef": "doc_sr"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sr-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "action": {"type": "check", "elementRef": "el_terms", "checked": true}}, "structuredContent": {"code": "STALE_ELEMENT", "message": "The synthetic element no longer resolves."}, "summary": "Element became stale.", "isError": true, "dispatch": "extension"},
+          {"id": "sr-s-4", "tool": "page.inspect", "arguments": {"documentRef": "doc_sr"}, "structuredContent": {"pageSnapshotRef": "ps_sr1", "documentRef": "doc_sr", "text": "Replacement controls observed", "elements": [{"ref": "el_terms_v2", "role": "checkbox", "name": "Replacement terms"}, {"ref": "el_save_v2", "role": "button", "name": "Replacement save"}], "nextCursor": null}, "summary": "Synthetic form explicitly reinspected.", "dispatch": "extension"},
+          {"id": "sr-s-5", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "action": {"type": "check", "elementRef": "el_terms_v2", "checked": true}}, "structuredContent": {"documentRef": "doc_sr"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sr-s-6", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "action": {"type": "click", "elementRef": "el_save_v2"}, "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sr", "inspection": {"pageSnapshotRef": "ps_sr2", "documentRef": "doc_sr", "text": "Saved after explicit replacement inspection", "elements": [], "nextCursor": null}}, "summary": "Recovery completed.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "sr-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sr"}, "structuredContent": {"pageSnapshotRef": "ps_sr0", "documentRef": "doc_sr", "text": "Original controls", "elements": [{"ref": "el_name", "role": "textbox"}, {"ref": "el_terms", "role": "checkbox", "name": "Old terms"}, {"ref": "el_save", "role": "button", "name": "Old save"}], "nextCursor": null}, "summary": "Synthetic form inspected.", "dispatch": "extension"},
+          {"id": "sr-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "actions": [{"type": "fill", "elementRef": "el_name", "text": "Synthetic value"}, {"type": "check", "elementRef": "el_terms", "checked": true}, {"type": "click", "elementRef": "el_save"}]}, "structuredContent": {"status": "partial", "completedActions": 1, "failedActionIndex": 1, "error": {"code": "STALE_ELEMENT", "message": "The synthetic element no longer resolves."}, "documentRef": "doc_sr"}, "summary": "Sequence stopped after a stale element.", "dispatch": "extension"},
+          {"id": "sr-b-3", "tool": "page.inspect", "arguments": {"documentRef": "doc_sr"}, "structuredContent": {"pageSnapshotRef": "ps_sr1", "documentRef": "doc_sr", "text": "Replacement controls observed", "elements": [{"ref": "el_terms_v2", "role": "checkbox", "name": "Replacement terms"}, {"ref": "el_save_v2", "role": "button", "name": "Replacement save"}], "nextCursor": null}, "summary": "Synthetic form explicitly reinspected.", "dispatch": "extension"},
+          {"id": "sr-b-4", "tool": "page.act", "arguments": {"documentRef": "doc_sr", "actions": [{"type": "check", "elementRef": "el_terms_v2", "checked": true}, {"type": "click", "elementRef": "el_save_v2"}], "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sr", "inspection": {"pageSnapshotRef": "ps_sr2", "documentRef": "doc_sr", "text": "Saved after explicit replacement inspection", "elements": [], "nextCursor": null}}, "summary": "Recovery completed.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "off_viewport_scroll_click_success", "workflowClass": "off-viewport", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"documentRef": "doc_ov", "inspection": {"pageSnapshotRef": "ps_ov1", "documentRef": "doc_ov", "text": "Opened state observed", "elements": [], "nextCursor": null}},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "ov-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ov"}, "structuredContent": {"pageSnapshotRef": "ps_ov0", "documentRef": "doc_ov", "text": "Target below viewport", "elements": [{"ref": "el_target", "role": "button", "name": "Synthetic target"}], "nextCursor": null}, "summary": "Target inspected.", "dispatch": "extension"},
+          {"id": "ov-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_ov", "action": {"type": "scroll", "elementRef": "el_target"}}, "structuredContent": {"documentRef": "doc_ov"}, "summary": "Target scrolled into view.", "dispatch": "extension"},
+          {"id": "ov-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_ov", "action": {"type": "click", "elementRef": "el_target"}, "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_ov", "inspection": {"pageSnapshotRef": "ps_ov1", "documentRef": "doc_ov", "text": "Opened state observed", "elements": [], "nextCursor": null}}, "summary": "Target opened.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "ov-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ov"}, "structuredContent": {"pageSnapshotRef": "ps_ov0", "documentRef": "doc_ov", "text": "Target below viewport", "elements": [{"ref": "el_target", "role": "button", "name": "Synthetic target"}], "nextCursor": null}, "summary": "Target inspected.", "dispatch": "extension"},
+          {"id": "ov-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_ov", "actions": [{"type": "scroll", "elementRef": "el_target"}, {"type": "click", "elementRef": "el_target"}], "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_ov", "inspection": {"pageSnapshotRef": "ps_ov1", "documentRef": "doc_ov", "text": "Opened state observed", "elements": [], "nextCursor": null}}, "summary": "Target opened.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "off_viewport_scroll_click_timeout_unknown_recovery", "workflowClass": "off-viewport", "weight": 1, "kind": "recovery", "recoveryOf": "off_viewport_scroll_click_success",
+      "expectedTerminal": {"pageSnapshotRef": "ps_ou1", "documentRef": "doc_ou", "text": "Post-timeout inspection observed opened state", "elements": [], "nextCursor": null},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "ou-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ou"}, "structuredContent": {"pageSnapshotRef": "ps_ou0", "documentRef": "doc_ou", "text": "Target below viewport", "elements": [{"ref": "el_target", "role": "button"}], "nextCursor": null}, "summary": "Target inspected.", "dispatch": "extension"},
+          {"id": "ou-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_ou", "action": {"type": "scroll", "elementRef": "el_target"}}, "structuredContent": {"documentRef": "doc_ou"}, "summary": "Target scrolled.", "dispatch": "extension"},
+          {"id": "ou-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_ou", "action": {"type": "click", "elementRef": "el_target"}}, "structuredContent": {"status": "unknown"}, "summary": "Outcome unknown after timeout.", "dispatch": "extension"},
+          {"id": "ou-s-4", "tool": "page.inspect", "arguments": {"tabRef": "tab_ou"}, "structuredContent": {"pageSnapshotRef": "ps_ou1", "documentRef": "doc_ou", "text": "Post-timeout inspection observed opened state", "elements": [], "nextCursor": null}, "summary": "Current state explicitly inspected before retry.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "ou-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ou"}, "structuredContent": {"pageSnapshotRef": "ps_ou0", "documentRef": "doc_ou", "text": "Target below viewport", "elements": [{"ref": "el_target", "role": "button"}], "nextCursor": null}, "summary": "Target inspected.", "dispatch": "extension"},
+          {"id": "ou-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_ou", "actions": [{"type": "scroll", "elementRef": "el_target"}, {"type": "click", "elementRef": "el_target"}]}, "structuredContent": {"status": "unknown", "completedActions": 1, "uncertainActionIndex": 1}, "summary": "Outcome unknown after timeout.", "dispatch": "extension"},
+          {"id": "ou-b-3", "tool": "page.inspect", "arguments": {"tabRef": "tab_ou"}, "structuredContent": {"pageSnapshotRef": "ps_ou1", "documentRef": "doc_ou", "text": "Post-timeout inspection observed opened state", "elements": [], "nextCursor": null}, "summary": "Current state explicitly inspected before retry.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "spa_delayed_polling", "workflowClass": "spa-settling", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"pageSnapshotRef": "ps_sp2", "documentRef": "doc_sp", "text": "Delayed work complete", "elements": [], "nextCursor": null},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "sp-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sp"}, "structuredContent": {"pageSnapshotRef": "ps_sp0", "documentRef": "doc_sp", "text": "SPA idle", "elements": [{"ref": "el_filter", "role": "textbox"}, {"ref": "el_run", "role": "button"}], "nextCursor": null}, "summary": "SPA controls inspected.", "dispatch": "extension"},
+          {"id": "sp-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_sp", "action": {"type": "fill", "elementRef": "el_filter", "text": "Synthetic filter"}}, "structuredContent": {"documentRef": "doc_sp"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sp-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_sp", "action": {"type": "click", "elementRef": "el_run"}, "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sp", "inspection": {"pageSnapshotRef": "ps_sp1", "documentRef": "doc_sp", "text": "Delayed work pending", "elements": [], "nextCursor": null}}, "summary": "Action settled; delayed work remains.", "dispatch": "extension"},
+          {"id": "sp-s-4", "tool": "page.inspect", "arguments": {"documentRef": "doc_sp"}, "structuredContent": {"pageSnapshotRef": "ps_sp2", "documentRef": "doc_sp", "text": "Delayed work complete", "elements": [], "nextCursor": null}, "summary": "Delayed state completed.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "sp-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sp"}, "structuredContent": {"pageSnapshotRef": "ps_sp0", "documentRef": "doc_sp", "text": "SPA idle", "elements": [{"ref": "el_filter", "role": "textbox"}, {"ref": "el_run", "role": "button"}], "nextCursor": null}, "summary": "SPA controls inspected.", "dispatch": "extension"},
+          {"id": "sp-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_sp", "actions": [{"type": "fill", "elementRef": "el_filter", "text": "Synthetic filter"}, {"type": "click", "elementRef": "el_run"}], "wait": "auto", "inspectAfter": "semantic"}, "structuredContent": {"documentRef": "doc_sp", "inspection": {"pageSnapshotRef": "ps_sp1", "documentRef": "doc_sp", "text": "Delayed work pending", "elements": [], "nextCursor": null}}, "summary": "Actions settled; delayed work remains.", "dispatch": "extension"},
+          {"id": "sp-b-3", "tool": "page.inspect", "arguments": {"documentRef": "doc_sp"}, "structuredContent": {"pageSnapshotRef": "ps_sp2", "documentRef": "doc_sp", "text": "Delayed work complete", "elements": [], "nextCursor": null}, "summary": "Delayed state completed.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "spa_capability_revoked", "workflowClass": "spa-settling", "weight": 1, "kind": "recovery", "recoveryOf": "spa_delayed_polling",
+      "expectedTerminal": {"pageSnapshotRef": "ps_sc1", "documentRef": "doc_sc", "text": "Filter value observed; run was not dispatched", "elements": [{"ref": "el_filter", "role": "textbox", "value": "Synthetic filter"}], "nextCursor": null},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "sc-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sc"}, "structuredContent": {"pageSnapshotRef": "ps_sc0", "documentRef": "doc_sc", "text": "SPA idle", "elements": [{"ref": "el_filter", "role": "textbox"}, {"ref": "el_run", "role": "button"}], "nextCursor": null}, "summary": "SPA controls inspected.", "dispatch": "extension"},
+          {"id": "sc-s-2", "tool": "page.act", "arguments": {"documentRef": "doc_sc", "action": {"type": "fill", "elementRef": "el_filter", "text": "Synthetic filter"}}, "structuredContent": {"documentRef": "doc_sc"}, "summary": "Action completed.", "dispatch": "extension"},
+          {"id": "sc-s-3", "tool": "page.act", "arguments": {"documentRef": "doc_sc", "action": {"type": "click", "elementRef": "el_run"}}, "structuredContent": {"code": "CAPABILITY_DISABLED", "message": "The synthetic page capability is disabled."}, "summary": "Page capability was revoked.", "isError": true, "dispatch": "extension"},
+          {"id": "sc-s-4", "tool": "page.inspect", "arguments": {"documentRef": "doc_sc"}, "structuredContent": {"pageSnapshotRef": "ps_sc1", "documentRef": "doc_sc", "text": "Filter value observed; run was not dispatched", "elements": [{"ref": "el_filter", "role": "textbox", "value": "Synthetic filter"}], "nextCursor": null}, "summary": "Known bounded state inspected.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "sc-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_sc"}, "structuredContent": {"pageSnapshotRef": "ps_sc0", "documentRef": "doc_sc", "text": "SPA idle", "elements": [{"ref": "el_filter", "role": "textbox"}, {"ref": "el_run", "role": "button"}], "nextCursor": null}, "summary": "SPA controls inspected.", "dispatch": "extension"},
+          {"id": "sc-b-2", "tool": "page.act", "arguments": {"documentRef": "doc_sc", "actions": [{"type": "fill", "elementRef": "el_filter", "text": "Synthetic filter"}, {"type": "click", "elementRef": "el_run"}]}, "structuredContent": {"status": "partial", "completedActions": 1, "failedActionIndex": 1, "error": {"code": "CAPABILITY_DISABLED", "message": "The synthetic page capability is disabled."}, "documentRef": "doc_sc"}, "summary": "Sequence stopped after capability revocation.", "dispatch": "extension"},
+          {"id": "sc-b-3", "tool": "page.inspect", "arguments": {"documentRef": "doc_sc"}, "structuredContent": {"pageSnapshotRef": "ps_sc1", "documentRef": "doc_sc", "text": "Filter value observed; run was not dispatched", "elements": [{"ref": "el_filter", "role": "textbox", "value": "Synthetic filter"}], "nextCursor": null}, "summary": "Known bounded state inspected.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "active_scroll_visual_inspect_after", "workflowClass": "active-visual", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"documentRef": "doc_av", "inspection": {"pageSnapshotRef": "ps_av1", "documentRef": "doc_av", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 640, "mimeType": "image/png"}},
+      "alternatives": {
+        "singular": {"steps": [{"id": "av-s-1", "tool": "page.act", "arguments": {"documentRef": "doc_av", "action": {"type": "scroll", "direction": "down", "amount": 640}, "inspectAfter": "visual"}, "structuredContent": {"documentRef": "doc_av", "inspection": {"pageSnapshotRef": "ps_av1", "documentRef": "doc_av", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 640, "mimeType": "image/png"}}, "summary": "Viewport scrolled and captured.", "dispatch": "extension", "artifact": {"decodedBytes": 1024}}]},
+        "bounded": {"steps": [{"id": "av-b-1", "tool": "page.act", "arguments": {"documentRef": "doc_av", "actions": [{"type": "scroll", "direction": "down", "amount": 640}], "inspectAfter": "visual"}, "structuredContent": {"documentRef": "doc_av", "inspection": {"pageSnapshotRef": "ps_av1", "documentRef": "doc_av", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 640, "mimeType": "image/png"}}, "summary": "Viewport scrolled and captured.", "dispatch": "extension", "artifact": {"decodedBytes": 1024}}]}
+      }
+    },
+    {
+      "id": "active_focus_visual_inspect_after", "workflowClass": "active-visual", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"documentRef": "doc_ao", "inspection": {"pageSnapshotRef": "ps_ao1", "documentRef": "doc_ao", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"}},
+      "alternatives": {
+        "singular": {"steps": [{"id": "ao-s-1", "tool": "page.act", "arguments": {"documentRef": "doc_ao", "action": {"type": "focus", "elementRef": "el_ao"}, "inspectAfter": "visual"}, "structuredContent": {"documentRef": "doc_ao", "inspection": {"pageSnapshotRef": "ps_ao1", "documentRef": "doc_ao", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"}}, "summary": "Single action completed and viewport captured.", "dispatch": "extension", "artifact": {"decodedBytes": 1024}}]},
+        "bounded": {"steps": [{"id": "ao-b-1", "tool": "page.act", "arguments": {"documentRef": "doc_ao", "actions": [{"type": "focus", "elementRef": "el_ao"}], "inspectAfter": "visual"}, "structuredContent": {"documentRef": "doc_ao", "inspection": {"pageSnapshotRef": "ps_ao1", "documentRef": "doc_ao", "width": 1280, "height": 720, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"}}, "summary": "Single action completed and viewport captured.", "dispatch": "extension", "artifact": {"decodedBytes": 1024}}]}
+      }
+    },
+    {
+      "id": "inactive_visual_structured_recovery", "workflowClass": "inactive-visual-recovery", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"pageSnapshotRef": "ps_iv", "documentRef": "doc_iv", "width": 800, "height": 600, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "iv-s-1", "tool": "page.inspect", "arguments": {"documentRef": "doc_iv", "view": "visual"}, "structuredContent": {"code": "ACTIVATION_REQUIRED", "message": "The synthetic tab must already be active.", "recovery": {"tabRef": "tab_iv"}}, "summary": "Activation is required.", "isError": true, "dispatch": "extension"},
+          {"id": "iv-s-2", "tool": "browser.snapshot", "arguments": {"tabRefs": ["tab_iv"]}, "structuredContent": {"browserSnapshotRef": "bs_iv", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 1, "windows": [{"ref": "win_iv", "items": [{"ref": "tab_iv", "title": "Synthetic inactive", "url": "https://fixture.example.invalid/inactive"}]}], "nextCursor": null}, "summary": "Synthetic browser target resolved.", "dispatch": "extension"},
+          {"id": "iv-s-3", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_iv", "operations": [{"type": "tab.activate", "tabRef": "tab_iv"}]}, "structuredContent": {"planRef": "plan_iv", "summary": "Activate 1 synthetic tab", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Activation plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "iv-s-4", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_iv"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied"}], "browserSnapshotRef": "bs_iv2"}, "summary": "Activation plan applied.", "dispatch": "extension"},
+          {"id": "iv-s-5", "tool": "page.inspect", "arguments": {"documentRef": "doc_iv", "view": "visual"}, "structuredContent": {"pageSnapshotRef": "ps_iv", "documentRef": "doc_iv", "width": 800, "height": 600, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"}, "summary": "Active viewport captured.", "dispatch": "extension", "artifact": {"decodedBytes": 512}}
+        ]},
+        "bounded": {"steps": [
+          {"id": "iv-b-1", "tool": "page.inspect", "arguments": {"documentRef": "doc_iv", "view": "visual"}, "structuredContent": {"code": "ACTIVATION_REQUIRED", "message": "The synthetic tab must already be active.", "recovery": {"tabRef": "tab_iv"}}, "summary": "Activation is required.", "isError": true, "dispatch": "extension"},
+          {"id": "iv-b-2", "tool": "browser.snapshot", "arguments": {"tabRefs": ["tab_iv"]}, "structuredContent": {"browserSnapshotRef": "bs_iv", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 1, "windows": [{"ref": "win_iv", "items": [{"ref": "tab_iv", "title": "Synthetic inactive", "url": "https://fixture.example.invalid/inactive"}]}], "nextCursor": null}, "summary": "Synthetic browser target resolved.", "dispatch": "extension"},
+          {"id": "iv-b-3", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_iv", "operations": [{"type": "tab.activate", "tabRef": "tab_iv"}]}, "structuredContent": {"planRef": "plan_iv", "summary": "Activate 1 synthetic tab", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Activation plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "iv-b-4", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_iv"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied"}], "browserSnapshotRef": "bs_iv2"}, "summary": "Activation plan applied.", "dispatch": "extension"},
+          {"id": "iv-b-5", "tool": "page.inspect", "arguments": {"documentRef": "doc_iv", "view": "visual"}, "structuredContent": {"pageSnapshotRef": "ps_iv", "documentRef": "doc_iv", "width": 800, "height": 600, "scrollX": 0, "scrollY": 0, "mimeType": "image/png"}, "summary": "Active viewport captured.", "dispatch": "extension", "artifact": {"decodedBytes": 512}}
+        ]}
+      }
+    },
+    {
+      "id": "inactive_visual_known_tab_recovery", "workflowClass": "inactive-visual-recovery", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"pageSnapshotRef": "ps_ik", "documentRef": "doc_ik", "text": "Active state verified", "elements": [], "nextCursor": null},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "ik-s-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ik", "view": "visual"}, "structuredContent": {"code": "ACTIVATION_REQUIRED", "message": "The synthetic tab must already be active."}, "summary": "Activation is required.", "isError": true, "dispatch": "extension"},
+          {"id": "ik-s-2", "tool": "browser.snapshot", "arguments": {"tabRefs": ["tab_ik"]}, "structuredContent": {"browserSnapshotRef": "bs_ik", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 1, "windows": [{"ref": "win_ik", "items": [{"ref": "tab_ik", "title": "Synthetic known target", "url": "https://fixture.example.invalid/known"}]}], "nextCursor": null}, "summary": "Synthetic browser target resolved.", "dispatch": "extension"},
+          {"id": "ik-s-3", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_ik", "operations": [{"type": "tab.activate", "tabRef": "tab_ik"}]}, "structuredContent": {"planRef": "plan_ik", "summary": "Activate 1 synthetic tab", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Activation plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "ik-s-4", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_ik"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied"}]}, "summary": "Activation plan applied.", "dispatch": "extension"},
+          {"id": "ik-s-5", "tool": "page.inspect", "arguments": {"tabRef": "tab_ik", "view": "semantic"}, "structuredContent": {"pageSnapshotRef": "ps_ik", "documentRef": "doc_ik", "text": "Active state verified", "elements": [], "nextCursor": null}, "summary": "Active state verified.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "ik-b-1", "tool": "page.inspect", "arguments": {"tabRef": "tab_ik", "view": "visual"}, "structuredContent": {"code": "ACTIVATION_REQUIRED", "message": "The synthetic tab must already be active."}, "summary": "Activation is required.", "isError": true, "dispatch": "extension"},
+          {"id": "ik-b-2", "tool": "browser.snapshot", "arguments": {"tabRefs": ["tab_ik"]}, "structuredContent": {"browserSnapshotRef": "bs_ik", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 1, "windows": [{"ref": "win_ik", "items": [{"ref": "tab_ik", "title": "Synthetic known target", "url": "https://fixture.example.invalid/known"}]}], "nextCursor": null}, "summary": "Synthetic browser target resolved.", "dispatch": "extension"},
+          {"id": "ik-b-3", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_ik", "operations": [{"type": "tab.activate", "tabRef": "tab_ik"}]}, "structuredContent": {"planRef": "plan_ik", "summary": "Activate 1 synthetic tab", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Activation plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "ik-b-4", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_ik"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied"}]}, "summary": "Activation plan applied.", "dispatch": "extension"},
+          {"id": "ik-b-5", "tool": "page.inspect", "arguments": {"tabRef": "tab_ik", "view": "semantic"}, "structuredContent": {"pageSnapshotRef": "ps_ik", "documentRef": "doc_ik", "text": "Active state verified", "elements": [], "nextCursor": null}, "summary": "Active state verified.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "multi_window_group_destructive_preview_apply", "workflowClass": "browser-organization", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_new"}, {"index": 1, "status": "applied"}, {"index": 2, "status": "applied"}], "browserSnapshotRef": "bs_mw2"},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "mw-s-1", "tool": "browser.snapshot", "arguments": {"detail": "compact"}, "structuredContent": {"browserSnapshotRef": "bs_mw", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 5, "windows": [{"ref": "win_m1", "focused": true, "items": [{"ref": "tab_m1", "title": "Synthetic one", "url": "https://fixture.example.invalid/one"}, {"ref": "tab_m2", "title": "Synthetic two", "url": "https://fixture.example.invalid/two"}, {"group": {"ref": "grp_m1", "title": "Synthetic existing group", "color": "blue"}, "tabs": [{"ref": "tab_m4", "title": "Synthetic four", "url": "https://fixture.example.invalid/four"}]}, {"ref": "tab_m3", "title": "Synthetic close", "url": "https://fixture.example.invalid/close"}]}, {"ref": "win_m2", "items": [{"ref": "tab_m5", "title": "Synthetic five", "url": "https://fixture.example.invalid/five"}]}], "nextCursor": null}, "summary": "Synthetic browser organization captured.", "dispatch": "extension"},
+          {"id": "mw-s-2", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_mw", "operations": [{"type": "group.create", "tabRefs": ["tab_m1", "tab_m2"], "title": "Synthetic group"}, {"type": "group.move", "groupRef": "grp_m1", "windowRef": "win_m2", "index": 0}, {"type": "tab.close", "tabRefs": ["tab_m3"]}]}, "structuredContent": {"planRef": "plan_mw", "summary": "Create 1 group; move 1 group; close 1 tab", "destructive": true, "warnings": ["Closing tabs cannot be undone reliably"], "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Destructive organization plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "mw-s-3", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_mw"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_new"}, {"index": 1, "status": "applied"}, {"index": 2, "status": "applied"}], "browserSnapshotRef": "bs_mw2"}, "summary": "Organization plan applied.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "mw-b-1", "tool": "browser.snapshot", "arguments": {"detail": "compact"}, "structuredContent": {"browserSnapshotRef": "bs_mw", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 5, "windows": [{"ref": "win_m1", "focused": true, "items": [{"ref": "tab_m1", "title": "Synthetic one", "url": "https://fixture.example.invalid/one"}, {"ref": "tab_m2", "title": "Synthetic two", "url": "https://fixture.example.invalid/two"}, {"group": {"ref": "grp_m1", "title": "Synthetic existing group", "color": "blue"}, "tabs": [{"ref": "tab_m4", "title": "Synthetic four", "url": "https://fixture.example.invalid/four"}]}, {"ref": "tab_m3", "title": "Synthetic close", "url": "https://fixture.example.invalid/close"}]}, {"ref": "win_m2", "items": [{"ref": "tab_m5", "title": "Synthetic five", "url": "https://fixture.example.invalid/five"}]}], "nextCursor": null}, "summary": "Synthetic browser organization captured.", "dispatch": "extension"},
+          {"id": "mw-b-2", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_mw", "operations": [{"type": "group.create", "tabRefs": ["tab_m1", "tab_m2"], "title": "Synthetic group"}, {"type": "group.move", "groupRef": "grp_m1", "windowRef": "win_m2", "index": 0}, {"type": "tab.close", "tabRefs": ["tab_m3"]}]}, "structuredContent": {"planRef": "plan_mw", "summary": "Create 1 group; move 1 group; close 1 tab", "destructive": true, "warnings": ["Closing tabs cannot be undone reliably"], "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Destructive organization plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "mw-b-3", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_mw"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_new"}, {"index": 1, "status": "applied"}, {"index": 2, "status": "applied"}], "browserSnapshotRef": "bs_mw2"}, "summary": "Organization plan applied.", "dispatch": "extension"}
+        ]}
+      }
+    },
+    {
+      "id": "multi_window_group_nondestructive_preview_apply", "workflowClass": "browser-organization", "weight": 1, "kind": "nominal",
+      "expectedTerminal": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_n"}, {"index": 1, "status": "applied", "createdRef": "win_n"}]},
+      "alternatives": {
+        "singular": {"steps": [
+          {"id": "mn-s-1", "tool": "browser.snapshot", "arguments": {"detail": "compact"}, "structuredContent": {"browserSnapshotRef": "bs_mn", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 3, "windows": [{"ref": "win_n1", "focused": true, "items": [{"ref": "tab_n1", "title": "Synthetic n1", "url": "https://fixture.example.invalid/n1"}, {"ref": "tab_n2", "title": "Synthetic n2", "url": "https://fixture.example.invalid/n2"}, {"ref": "tab_n3", "title": "Synthetic n3", "url": "https://fixture.example.invalid/n3"}]}], "nextCursor": null}, "summary": "Synthetic organization captured.", "dispatch": "extension"},
+          {"id": "mn-s-2", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_mn", "operations": [{"type": "group.create", "tabRefs": ["tab_n1", "tab_n2"], "title": "Synthetic group"}, {"type": "window.create", "tabRefs": ["tab_n3"]}]}, "structuredContent": {"planRef": "plan_mn", "summary": "Create 1 group and 1 window", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Organization plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "mn-s-3", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_mn"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_n"}, {"index": 1, "status": "applied", "createdRef": "win_n"}]}, "summary": "Organization plan applied.", "dispatch": "extension"}
+        ]},
+        "bounded": {"steps": [
+          {"id": "mn-b-1", "tool": "browser.snapshot", "arguments": {"detail": "compact"}, "structuredContent": {"browserSnapshotRef": "bs_mn", "capturedAt": "2030-01-01T00:00:00Z", "totalMatched": 3, "windows": [{"ref": "win_n1", "focused": true, "items": [{"ref": "tab_n1", "title": "Synthetic n1", "url": "https://fixture.example.invalid/n1"}, {"ref": "tab_n2", "title": "Synthetic n2", "url": "https://fixture.example.invalid/n2"}, {"ref": "tab_n3", "title": "Synthetic n3", "url": "https://fixture.example.invalid/n3"}]}], "nextCursor": null}, "summary": "Synthetic organization captured.", "dispatch": "extension"},
+          {"id": "mn-b-2", "tool": "browser.change", "arguments": {"mode": "preview", "browserSnapshotRef": "bs_mn", "operations": [{"type": "group.create", "tabRefs": ["tab_n1", "tab_n2"], "title": "Synthetic group"}, {"type": "window.create", "tabRefs": ["tab_n3"]}]}, "structuredContent": {"planRef": "plan_mn", "summary": "Create 1 group and 1 window", "expiresAt": "2030-01-01T00:05:00Z"}, "summary": "Organization plan previewed.", "dispatch": "brokerLocal"},
+          {"id": "mn-b-3", "tool": "browser.change", "arguments": {"mode": "apply", "planRef": "plan_mn"}, "structuredContent": {"status": "applied", "results": [{"index": 0, "status": "applied", "createdRef": "grp_n"}, {"index": 1, "status": "applied", "createdRef": "win_n"}]}, "summary": "Organization plan applied.", "dispatch": "extension"}
+        ]}
+      }
+    }
+  ]
+}

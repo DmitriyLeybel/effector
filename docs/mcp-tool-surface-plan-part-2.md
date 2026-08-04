@@ -467,7 +467,7 @@ public behavior that belongs to an earlier owner.
 | Visual CSS viewport dimensions versus encoded image pixel dimensions and field names | P2.7 | Schema decision and zoom/device-scale tests |
 | Capture generation sources, A-B-A guarantees, and unavoidable race wording | P2.7 | Algorithm proof boundary and live evidence |
 | Capture serialization, Chrome rate-limit policy, and retry guidance | P2.7 | Rate/concurrency limits and public error behavior |
-| Exact `wait="auto"` navigation readiness, DOM quiet interval, and `wait="none"` result semantics | P2.8 | Timing state machine and fake-clock tests |
+| Implementation proof for the Part 3-frozen navigation readiness, 250 ms DOM quiet interval, and `wait="none"` identity semantics | P2.8 | Timing state machine and fake-clock tests |
 | Action success plus inspection success/failure/unknown output unions | P2.8 | Golden schemas and target-client validation |
 | Evaluation async wrapper construction and safe argument transfer | P2.9 | Wrapper specification and hostile-string tests |
 | Evaluation serialization policy for undefined, non-finite numbers, cycles, BigInt, DOM values, and oversized values | P2.9 | Exact accepted value contract |
@@ -828,6 +828,11 @@ Add bounded opt-in apply for `tab.move`, `tab.update`, `tab.activate`,
 Complete tab open/close/duplicate/discard/reload, grouping/ungrouping,
 `group.move`, and window create/close with explicit final-window policy.
 
+Part 3 freezes `destructive:true` for previews containing `tab.close`,
+`tab.discard`, or `window.close`. The field is omitted otherwise; summaries and
+deduplicated warning order are deterministic. Apply remains plan-only and rejects
+`confirmDestructive`.
+
 ### Native work
 
 - Add the remaining operation schema branches only as each is implemented.
@@ -835,6 +840,8 @@ Complete tab open/close/duplicate/discard/reload, grouping/ungrouping,
   never issue a plan that the matched build cannot apply.
 - Add destructive warnings for close, discard, reload, navigation by open, and
   window closure as applicable.
+- Return the frozen compact destructive flag without echoing operations or
+  browser metadata.
 - Model composite operations and known created references without implying
   rollback.
 - Encode dependencies so `stopOnError=false` skips dependent operations and may
@@ -966,10 +973,16 @@ agent, and semantic-only `page.inspect` branches.
 Add reliable already-active viewport capture after the P2.0 image spike has
 passed and semantic document identity is established.
 
+Part 3 freezes compact activation recovery: a `documentRef` caller receives the
+otherwise unknown current `tabRef`; a `tabRef` caller receives no duplicate.
+Recovery remains an explicit snapshot-preview-apply-retry workflow.
+
 ### Native work
 
 - Add visual and both input/output branches only after schema and client gates
   pass.
+- Add the typed `ACTIVATION_REQUIRED.recovery.tabRef` variant only for a
+  `documentRef` caller and prove it creates no hidden snapshot or plan.
 - Accept exactly one typed PNG artifact for visual/both methods.
 - Validate metadata/artifact consistency, encoded/decoded bytes, dimensions,
   MIME, and method ownership.
@@ -1031,6 +1044,10 @@ passed and semantic document identity is established.
 Perform exactly one structured action against one exact document and optionally
 reuse the inspect pipelines for bounded post-action verification.
 
+The frozen Part 3 corpus rejected bounded action sequences at G3.2. P2.8
+therefore retains singular `action`; no action-cardinality ADR or sequence
+prototype is required for V1.
+
 ### Native work
 
 - Add strict action unions only for implemented click, fill, select, check,
@@ -1054,8 +1071,10 @@ reuse the inspect pipelines for bounded post-action verification.
 - Implement service-worker navigation/history/reload actions after exact document
   precheck and URL validation.
 - Register navigation and mutation observation before action dispatch.
-- Implement frozen `wait="auto"` navigation/quiet behavior and distinct
-  `wait="none"` bookkeeping.
+- Implement frozen `wait="auto"`: authoritative replacement-document readiness
+  after navigation, otherwise 250 milliseconds of target-document subtree DOM
+  quiet, all within the aggregate deadline. Keep distinct `wait="none"`
+  bookkeeping and make no application-stability claim.
 - Serialize one action per document while allowing bounded independent documents.
 - Preflight active viewport before any action whose `inspectAfter` requests
   visual output; preflight failure performs no action.
@@ -1074,6 +1093,8 @@ reuse the inspect pipelines for bounded post-action verification.
 - Navigation between resolution and dispatch and action-triggered navigation.
 - Auto quiet, delayed navigation, continuous DOM churn, wait none, timeout,
   cancellation, late completion, and uncertain outcome.
+- Settling-only timeout returns `waitError` after known action success and omits
+  requested inspection; action uncertainty remains `status="unknown"`.
 - Per-document serialization and independent-document concurrency limits.
 - Click-and-inspect, scroll-and-capture, navigate-and-inspect, visual preflight
   before mutation, action success plus inspection failure, and one image.

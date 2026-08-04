@@ -1,6 +1,6 @@
 # MCP tool surface implementation plan, Part 3
 
-Status: proposed workflow-efficiency overlay
+Status: P3.0 complete; bounded actions rejected for V1; owning branches pending
 Date: 2026-08-03
 
 ## Purpose
@@ -25,6 +25,21 @@ Part 3 has four goals:
    freeze the existing automatic wait without creating a predicate language.
 4. Measure complete agent trajectories before final schema and legacy-removal
    gates, not only isolated tool definitions and responses.
+
+## Current decision
+
+The frozen P3.0 corpus and reproducible report are in
+[`measurements/p3-0-v1.md`](measurements/p3-0-v1.md). G3.0 and G3.1 pass. The
+bounded `page.act` candidate fails mandatory G3.2 efficiency gates: at least one
+eligible success and recovery costs more, complete eligible final-context
+savings remain below both required thresholds, and the complete recovery corpus
+does not beat singular calls.
+
+The candidate is therefore rejected for V1 without a runtime prototype or a new
+ADR. P2.8 retains singular `action`, the automatic wait below is frozen, and
+`inspectAfter` plus explicit inspection loops remain the efficient path. This
+decision establishes no sequence runtime or safety claim. P3.1 and P3.4 remain
+interleaved with their owning Part 2 branches.
 
 ## Decisions preserved
 
@@ -57,7 +72,7 @@ Part 3 does not reopen these rules:
 | --- | --- |
 | Keep five tools | Accept as fixed. Do not add `page.wait`, granular action tools, or a confirmation tool. |
 | Preserve compact defaults and exact references | Accept as release invariants and trajectory measurements. |
-| Add a small `page.act` sequence | Measure a strict action-only candidate against singular calls before changing the contract. Reject it if safety or efficiency gates fail. |
+| Add a small `page.act` sequence | Rejected for V1. The frozen candidate failed G3.2 efficiency gates before a runtime prototype was warranted. |
 | Make singular action plus `inspectAfter` cheaper | Required whether or not sequences pass. Reuse the resulting page snapshot family where identity permits. |
 | Add `confirmDestructive` | Reject. A caller boolean is not user consent and would weaken the plan-only apply shape. |
 | Make destructive changes clearer | Accept compact machine-readable preview metadata and deterministic warnings. |
@@ -149,8 +164,8 @@ The single-action path remains first-class even if sequences pass:
 ## Decision-gated `page.act` candidate
 
 The current proposed contract and ADR 0006 specify exactly one structured action.
-Part 3 does not change that immediately. It defines one candidate to measure
-before P2.8 schema freeze.
+The candidate below was measured and rejected for V1 at G3.2. It remains here as
+the frozen comparison shape; it must not be implemented or advertised.
 
 ### Candidate shape
 
@@ -219,8 +234,11 @@ or sixth tool. It freezes the existing final `wait="auto"` behavior before P2.8:
   idle, application stability, or proof that delayed work is finished.
 - Recheck exact document and action result state after waiting. Layout-only or
   compositor-only changes may not create mutation records.
-- `wait="none"` skips final navigation/quiet observation after dispatch
-  bookkeeping, while still performing identity checks between sequence actions.
+- `wait="none"` skips readiness and DOM-quiet settling but drains navigation
+  already observed before action completion and establishes the exact current
+  document before ordinary success. If exact resulting identity cannot be
+  established within the aggregate deadline, return `status="unknown"`; never
+  return a guessed or stale replacement reference.
 
 Trajectory fixtures must measure SPA inspect polling that remains after this
 heuristic. A future exact-condition proposal is considered only after the V1
@@ -293,6 +311,8 @@ Rules:
 
 Required before Part 3 work affects implementation:
 
+Status: passed in `p3-0-synthetic-v2`.
+
 - Confirm exactly five target tools.
 - Confirm no new Chrome permission, trust boundary, or policy layer.
 - Confirm Part 2 remains the implementation authority.
@@ -321,6 +341,10 @@ Record MCP calls, Native Messaging dispatches, UTF-8 request/response bytes,
 model-visible tokens, and final context growth. Elapsed time is informational
 unless captured by one fixed end-to-end runner.
 
+Status: passed. The checked-in harness validates strict normalized schemas,
+reference provenance, terminal knowledge, protocol-v3 envelopes, artifact
+accounting, and deterministic tokenization.
+
 ### G3.2: Sequence value
 
 Accept the bounded candidate only if all are true:
@@ -344,9 +368,14 @@ These are schema/release gates, not permanent per-commit tests. If the candidate
 does not pass, retain singular `action`, freeze `wait="auto"`, and rely on
 `inspectAfter` plus explicit inspect loops.
 
+Status: failed. The bounded candidate is rejected for V1.
+
 ### G3.3: Sequence safety
 
 Before acceptance, freeze and test:
+
+Status: not run because G3.2 already rejected the candidate. No sequence safety
+claim is made.
 
 - Three-action cap and one aggregate deadline.
 - Exact terminal-action and unexpected-navigation behavior.
@@ -426,6 +455,10 @@ Timing: before P2.5/P2.7/P2.8 schema freezes.
   preview baselines.
 - Complete G3.0 and G3.1.
 
+Status: complete. The development-only harness is
+`tools/trajectory-measure`; its pinned command checks the generated P3.0 report
+byte for byte.
+
 ### P3.1: Destructive and activation recovery refinements
 
 Timing: destructive metadata with P2.5; activation recovery with P2.7.
@@ -453,13 +486,16 @@ advertisement.
 - If the gates pass, accept the focused ADR and replace the proposed singular
   contract before implementation ships.
 
+Status: closed without a prototype. The frozen numeric gate failed, so runtime,
+named-client confirmation, and G3.3 work would not change the V1 decision.
+
 ### P3.3: Action implementation integration
 
 Timing: within P2.8, not as a parallel runtime project.
 
 - Reuse Part 2 operation ownership, dispatch state, document lanes, page agent,
   inspect pipelines, artifact handling, quotas, and capability checks.
-- Implement only the selected singular or bounded shape.
+- Implement the selected singular shape.
 - Keep singular success and common one-action execution on the shortest path.
 - Complete schema, process, extension, live, privacy, and security gates.
 

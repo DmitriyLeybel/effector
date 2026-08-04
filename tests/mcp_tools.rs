@@ -54,10 +54,17 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
     );
     let client = ClientInfo::default().serve(transport).await.unwrap();
     let tools = client.list_tools(None).await.unwrap();
-    let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
-    assert!(names.contains(&"browser.list"));
-    assert!(names.contains(&"browser.snapshot"));
-    assert!(names.contains(&"tabs.list"));
+    let mut names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["browser.list", "browser.snapshot", "tabs.list"]);
+    for proposed in [
+        "browser.change",
+        "page.inspect",
+        "page.act",
+        "page.evaluate",
+    ] {
+        assert!(!names.contains(&proposed));
+    }
     let snapshot = tools
         .tools
         .iter()

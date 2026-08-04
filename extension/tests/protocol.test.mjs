@@ -27,6 +27,14 @@ function request(overrides = {}) {
   };
 }
 
+test("implementation manifest advertises only the implemented read surface", () => {
+  assert.deepEqual(IMPLEMENTATIONS, [
+    { method: "browser.list", abiRevision: 1 },
+    { method: "browser.snapshot", abiRevision: 1 },
+    { method: "tabs.list", abiRevision: 1 }
+  ]);
+});
+
 test("protocol v3 accepts only the exact negotiated ready acknowledgement", () => {
   const valid = {
     type: "ready_ack",

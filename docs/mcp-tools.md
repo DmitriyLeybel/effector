@@ -244,10 +244,17 @@ Preview returns only new information:
 {
   "planRef": "plan_72C",
   "summary": "Create 1 group with 3 tabs; close 2 tabs",
+  "destructive": true,
   "warnings": ["Closing tabs cannot be undone reliably"],
   "expiresAt": "2026-08-03T12:05:00Z"
 }
 ```
+
+`destructive` is present only when true and is set for `tab.close`,
+`tab.discard`, and `window.close`. Summary wording and warning order are
+deterministic and warnings are deduplicated. Other disruptive operations such as
+reload, navigation, focus, and moving the final tab retain operation-specific
+warnings without being labeled destructive.
 
 It does not echo normalized operations. The extension's global **Browser
 changes** toggle is the V1 authorization decision. Effector does not add custom
@@ -408,6 +415,11 @@ it. Effector tracks activation and navigation events around capture, verifies
 tab and document identity, and discards the image if either changed. It never
 activates or focuses implicitly; a non-active target returns
 `ACTIVATION_REQUIRED`, and the agent may explicitly use `browser.change` first.
+When the caller supplied `documentRef`, the error adds
+`recovery: {"tabRef":"..."}` because the caller otherwise lacks that reference.
+A `tabRef` caller receives no duplicate recovery field. Recovery never creates
+or applies a snapshot or plan: the caller explicitly snapshots, previews
+`tab.activate`, applies the returned `planRef`, and retries inspection.
 
 Page cursors are immutable slices of one retained inspection. Page and element
 references fail after navigation. Discarded and frozen tabs return an error
@@ -439,7 +451,7 @@ document and optionally return a compact post-action semantic or visual view.
 | --- | --- | --- | --- |
 | `documentRef` | opaque reference | required | Require this exact document and identify its tab without activating it. |
 | `action` | action union | required | Perform exactly one supported structured action. |
-| `wait` | `auto` or `none` | `auto` | Wait briefly for navigation or DOM stabilization, or return after dispatch. |
+| `wait` | `auto` or `none` | `auto` | Observe bounded navigation readiness or 250 milliseconds of target-document DOM quiet, or return after dispatch bookkeeping. |
 | `timeoutMs` | integer, 1 through 30000 | `10000` | Bound target resolution, action dispatch, and automatic waiting. |
 | `inspectAfter` | `semantic`, `visual`, or `both` | none | After the action and automatic wait, return a compact viewport inspection in the same call. |
 
@@ -465,6 +477,19 @@ that the document's tab is already active in its window. It fails before acting
 if capture would be unavailable. The post-action inspection reuses
 `page.inspect` result shapes and image bounds.
 
+For `wait="auto"`, Effector registers target-document mutation and navigation
+observation before dispatch. Observed navigation waits for the relevant
+replacement document agent and `document.readyState` of `interactive` or
+`complete`. Without navigation, it requires 250 milliseconds without a
+target-document subtree `childList`, `attributes`, or `characterData` mutation.
+The aggregate `timeoutMs` never extends because activity continues. DOM quiet is
+a best-effort settling heuristic, not network idle or proof that delayed
+application work finished. `wait="none"` skips final settling while retaining
+identity and dispatch bookkeeping. It drains navigation already observed before
+action completion and establishes the exact current document before ordinary
+success. If that identity cannot be established within the aggregate deadline,
+the result is `status="unknown"`, and the caller inspects before retrying.
+
 | Type | Fields | Behavior |
 | --- | --- | --- |
 | `click` | `elementRef`; `button="primary"`, `clickCount=1` | Invoke the exact visible, enabled element through DOM interaction. |
@@ -485,6 +510,8 @@ presses, drag and drop, uploads, native dialogs, or browser UI.
 
 The tool does not wake or activate implicitly. If foreground state is required,
 it returns `ACTIVATION_REQUIRED`; the agent may use `browser.change` explicitly.
+Visual `inspectAfter` preflight uses the same compact recovery shape as visual
+`page.inspect` and performs no action when preflight fails.
 
 Without `inspectAfter`, the compact success result is the current document
 reference:
@@ -501,6 +528,13 @@ page before deciding whether to retry.
 With `inspectAfter`, the result also contains `inspection` and, for visual modes,
 one MCP image content block. This avoids a second ordinary verification call
 without making the read-only `page.inspect` tool scroll or mutate.
+
+Known action success followed only by inspection failure returns normal success
+with compact `inspectionError`. Known action success followed only by an
+automatic-settling timeout returns normal success with compact `waitError` and
+omits the requested inspection. `waitError` means the action must not be retried
+blindly; the caller inspects current state. An uncertain action outcome remains
+`status="unknown"` instead.
 
 If dispatch may have occurred but completion cannot be established, the normal
 result is compact and explicit:

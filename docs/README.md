@@ -60,6 +60,8 @@ evolve independently.
 - [`mcp-tool-surface-plan-part-3.md`](mcp-tool-surface-plan-part-3.md) —
   decision-gated workflow-efficiency overlay for destructive clarity, explicit
   activation recovery, bounded page actions, automatic waits, and token traces.
+- [`measurements/p3-0-v1.md`](measurements/p3-0-v1.md) — frozen synthetic P3.0
+  trajectory evidence and the V1 bounded-action rejection.
 - [`research/playwright-mcp-gaps.md`](research/playwright-mcp-gaps.md) — browser
   management capabilities that complement Playwright MCP.
 - [`research/chrome-devtools-and-extension-api-coverage.md`](research/chrome-devtools-and-extension-api-coverage.md)

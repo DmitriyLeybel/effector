@@ -1,0 +1,40 @@
+name: Trajectory measurement
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/trajectory-measure/**"
+      - "docs/measurements/p3-0-v1.md"
+      - "docs/mcp-tool-surface-plan-part-3.md"
+      - ".github/workflows/trajectory-measure.yml"
+  push:
+    paths:
+      - "tools/trajectory-measure/**"
+      - "docs/measurements/p3-0-v1.md"
+      - "docs/mcp-tool-surface-plan-part-3.md"
+      - ".github/workflows/trajectory-measure.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/trajectory-measure
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Run tests
+        run: cargo test --locked
+      - name: Check generated report
+        run: cargo run --locked -- check

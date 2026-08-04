@@ -185,6 +185,18 @@ cargo test --test mcp_tools
 cargo test --test full_mcp_roundtrip
 ```
 
+Part 3 synthetic trajectory gate:
+
+```bash
+cargo fmt --manifest-path tools/trajectory-measure/Cargo.toml -- --check
+cargo clippy --locked --manifest-path tools/trajectory-measure/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --locked --manifest-path tools/trajectory-measure/Cargo.toml
+cargo run --locked --manifest-path tools/trajectory-measure/Cargo.toml -- check
+```
+
+The measurement crate is standalone and development-only. Do not add it to the
+broker package or extension runtime.
+
 CI uses its runner-provided Node installation for JavaScript syntax checks.
 There is no repository-defined JavaScript formatter, linter, package manager,
 or automated extension behavior test. Do not introduce Node as an extension

@@ -69,6 +69,10 @@ Last updated: 2026-08-03
 - [x] Drafted the Part 3 workflow-efficiency overlay, preserving the five-tool
       surface while gating destructive clarity, activation recovery, bounded
       page-action sequences, automatic waits, and token trajectories on evidence.
+- [x] Added a standalone pinned-tokenizer trajectory harness and frozen synthetic
+      P3.0 corpus. G3.0/G3.1 pass; bounded `page.act` sequences fail G3.2 and are
+      rejected for V1, leaving singular action plus `inspectAfter` and explicit
+      inspection loops.
 
 ## Current state
 
@@ -87,6 +91,9 @@ Last updated: 2026-08-03
 - No ACP client, agent supervisor, or side-panel conversation UI exists.
 - `browser.snapshot` is implemented alongside migration-only `browser.list` and
   `tabs.list`. Browser changes and all page tools remain unimplemented.
+- Part 3 freezes destructive preview metadata, compact activation recovery, and
+  250-millisecond best-effort automatic DOM quiet for their future owning
+  branches. None is currently advertised.
 - Protocol v3 and snapshot behavior pass automated Rust tests. The
   dependency-free extension suite includes model, protocol-v3, and background
   controller tests; the new JavaScript tests still need to run in an environment
