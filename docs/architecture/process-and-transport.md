@@ -157,5 +157,13 @@ Browser snapshots use complete bounded baselines and one broker-owned,
 class-aware aggregate retention store. An injected monotonic clock, per-class
 count/byte policy, global FIFO pressure, fixed non-refreshing TTLs, and owned
 eviction cleanup preserve exact accounting as future retained kinds are added.
-Keyed mutation-task ownership, multi-waiter result sharing, overlap lanes, and
-cancellation-aware non-atomic outcome handling remain unimplemented.
+The runtime also owns a 32-record browser-operation registry. One random internal
+operation key starts at most one broker task; concurrent waiters join its terminal
+signal, cancellation drops only that waiter, and owner eviction does not abort
+running work. Canonical incarnation-key lane sets serialize overlapping tasks by
+admission order while disjoint tasks can run concurrently. Shutdown publishes
+`notDispatched` for queued tasks and `unknown` for running tasks before aborting
+and clearing them. An uncertain predecessor blocks its dependent task before
+dispatch without poisoning unrelated transitive lanes. Retained plans, typed
+results, operation transport dispatch, and cancellation-aware non-atomic outcome
+mapping remain unimplemented.

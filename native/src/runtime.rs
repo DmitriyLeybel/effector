@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     browser_snapshot::{Baseline, StoredSnapshot},
+    operation_tasks::OperationTasks,
     protocol::{
         Capabilities, CapabilitiesChangedMessage, DomainError, ImplementationEntry, ReadyMessage,
         validate_capability_implementations,
@@ -28,6 +29,7 @@ const SNAPSHOT_TTL: Duration = Duration::from_secs(2 * 60);
 pub(crate) struct BrokerRuntime {
     inner: Arc<Mutex<RuntimeState>>,
     clock: Arc<dyn Clock>,
+    operations: OperationTasks,
 }
 
 pub(crate) struct RuntimeState {
@@ -96,6 +98,7 @@ impl BrokerRuntime {
                 latest_model_fingerprint: None,
             })),
             clock,
+            operations: OperationTasks::new(),
         }
     }
 
@@ -139,6 +142,7 @@ impl BrokerRuntime {
     }
 
     pub(crate) fn clear(&self) {
+        self.operations.shutdown_and_clear();
         let mut state = self.state();
         state.connected = None;
         state.clear_retained();

@@ -35,6 +35,8 @@ restart, and broker-restart rows below are implemented foundations from ADR
 | Counts call completes | Counts could become an unintended retained inventory | Return counts without retaining a snapshot, cursor, or count record |
 | `frozen` filter is requested where Chrome cannot report it | Missing could be mistaken for false | Return capability-unavailable or unsupported rather than an incorrect match set |
 | A read waiter leaves or its deadline expires while queued | Work could dispatch after its caller no longer observes it | Remove the waiter and have the writer skip the unclaimed frame; validate any bounded late response by its retained method policy |
+| One waiter leaves a broker-owned operation | Cancelling shared execution could lose or duplicate a side effect | Remove only that waiter; keep the keyed task and terminal result available to other or later waiters |
+| Overlapping operation plans arrive concurrently | Chrome topology or target preconditions could race | Serialize canonical incarnation-key lane sets by admission order; allow disjoint lanes within the fixed cap |
 | User changes relevant target state after preview | A mutation could affect unintended state | Recheck exact incarnation and operation-specific preconditions before each operation |
 | Tab disappears before mutation | Chrome returns missing tab | Return typed not-found; never reuse the old ID |
 | Chrome restarts and reuses numeric IDs | A stale reference could target a new object | Use random incarnations and broker refs; reject every pre-restart public handle |

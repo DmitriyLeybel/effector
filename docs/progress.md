@@ -92,6 +92,10 @@ Last updated: 2026-08-03
       records. Writer dequeue now commits dispatch, recomputes the extension
       budget, skips cancelled/expired queued reads, preserves late-response method
       validation, and closes admission during broker shutdown.
+- [x] Added broker-owned browser-operation task infrastructure with a 32-record
+      cap, exactly-once keyed admission, multi-waiter completion, owner-aware
+      eviction, dispatch-aware shutdown outcomes, and admission-ordered overlap
+      lanes. No side-effecting method is reachable yet.
 
 ## Current state
 
@@ -122,9 +126,10 @@ Last updated: 2026-08-03
   normalized full snapshot result and covers retained cursor lifecycle failures.
   Generalized retention, exact aggregate quota policy, and internal snapshot
   lookup are implemented. The read transport now has explicit lifecycle and
-  flushed-dispatch accounting. Keyed broker-owned side-effect tasks, operation
-  overlap lanes, remaining race coverage, client spikes, and live evidence are
-  still open.
+  flushed-dispatch accounting. Broker-owned task ownership and overlap lanes are
+  implemented but remain disconnected from public tools until retained plans and
+  operation dispatch land. Dynamic registry work, remaining race coverage,
+  client spikes, and live evidence are still open.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 

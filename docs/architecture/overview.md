@@ -75,6 +75,10 @@ but divides new state deliberately:
   per-class count/byte limits, global FIFO pressure, and fixed creation-time TTLs
   that reads do not refresh. Browser snapshots use it now; plans and page
   snapshots remain future payload classes. Counts are returned without retention.
+- A broker-owned operation registry provides bounded exactly-once task admission,
+  joined completion waiters, dispatch-aware shutdown outcomes, and
+  admission-ordered overlap lanes. It is infrastructure only until retained
+  mutation plans and apply dispatch are implemented.
 - Snapshot windows are ordered with the focused window first and remaining
   windows by ascending runtime Chrome window ID; tab-strip order remains Chrome
   order.

@@ -29,9 +29,13 @@ accounting, and same-installation broker-restart invalidation. P2.1 now has type
 browser/snapshot/cursor references, injected monotonic time, one class-aware
 aggregate retention store, internal `browserSnapshotRef` lookup, and a bounded
 read request lifecycle with writer-owned dispatch commitment and dequeue-time
-deadline budgets. Keyed broker-owned operation tasks, overlap lanes, remaining
-races, client/live evidence, and later retained payload migrations remain open;
-they must close before mutations are advertised.
+deadline budgets. Keyed broker-owned operation tasks now enforce exactly-once
+admission, a 32-record cap, joined waiters, shutdown uncertainty, owner-aware
+cleanup, and admission-ordered overlap lanes. Queued work remains explicitly
+`notDispatched`; only loss after task execution begins becomes `unknown`. Dynamic
+registry structures, operation transport integration, remaining races,
+client/live evidence, and later retained payload migrations remain open; they
+must close before mutations are advertised.
 
 [`Part 3`](mcp-tool-surface-plan-part-3.md) overlays workflow-efficiency and
 schema decision gates on P2.5, P2.7, P2.8, and release measurement. It does not

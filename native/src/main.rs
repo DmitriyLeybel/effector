@@ -3,6 +3,7 @@ mod browser_snapshot;
 mod doctor;
 mod install;
 mod mcp;
+mod operation_tasks;
 mod protocol;
 mod references;
 mod request_lifecycle;
