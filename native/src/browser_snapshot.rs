@@ -1329,6 +1329,54 @@ mod tests {
         assert_eq!(state.snapshot_bytes, 0);
     }
 
+    #[test]
+    fn expiry_removes_all_expired_prefix_records_and_preserves_exact_accounting() {
+        let runtime = BrokerRuntime::new();
+        let mut first = stored_snapshot("first".to_owned());
+        first.snapshot_ref = "bs_first".to_owned();
+        first.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_secs(2);
+        first.retained_bytes = retained_size(&first).unwrap();
+        let mut second = stored_snapshot("second".to_owned());
+        second.snapshot_ref = "bs_second".to_owned();
+        second.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_secs(1);
+        second.retained_bytes = retained_size(&second).unwrap();
+        let mut current = stored_snapshot("current".to_owned());
+        current.snapshot_ref = "bs_current".to_owned();
+        current.cursors.insert("cur_current".to_owned(), 0);
+        current.retained_bytes = retained_size(&current).unwrap();
+        let current_bytes = current.retained_bytes;
+        {
+            let mut state = runtime.state();
+            state.snapshot_bytes =
+                first.retained_bytes + second.retained_bytes + current.retained_bytes;
+            state.snapshots.extend([first, second, current]);
+        }
+
+        let page = continue_snapshot(&runtime, "cur_current").unwrap();
+        assert_eq!(page.browser_snapshot_ref, "bs_current");
+        let state = runtime.state();
+        assert_eq!(state.snapshots.len(), 1);
+        assert_eq!(state.snapshot_bytes, current_bytes);
+    }
+
+    #[test]
+    fn cursor_replay_does_not_refresh_snapshot_creation_time() {
+        let runtime = BrokerRuntime::new();
+        let created_at = Instant::now() - Duration::from_secs(30);
+        let mut snapshot = stored_snapshot("title".to_owned());
+        snapshot.created_at = created_at;
+        snapshot.cursors.insert("cur_replay".to_owned(), 0);
+        snapshot.retained_bytes = retained_size(&snapshot).unwrap();
+        {
+            let mut state = runtime.state();
+            state.snapshot_bytes = snapshot.retained_bytes;
+            state.snapshots.push_back(snapshot);
+        }
+
+        continue_snapshot(&runtime, "cur_replay").unwrap();
+        assert_eq!(runtime.state().snapshots[0].created_at, created_at);
+    }
+
     fn stored_snapshot(title: String) -> StoredSnapshot {
         let baseline: Baseline = serde_json::from_value(json!({
             "browserInstanceId": "browser",

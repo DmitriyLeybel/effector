@@ -22,10 +22,13 @@ are implemented without changing permissions or public tools. P2.0 live/client
 evidence remains open. The first snapshot-boundary slice now includes shared
 process-test support, deterministic current-tool schema and representative-result
 goldens, optional/non-null input-schema correction, compact-output omission
-alignment, filter/scope/hierarchy coverage, cursor FIFO/expiry checks, and exact
-result-size boundaries. Snapshot lookup, remaining races and retention cases,
-P2.1 broker-owned operation tasks, and generalized retention remain open; they
-must close before mutations are advertised.
+alignment, filter/scope/hierarchy coverage, exact result-size boundaries,
+fixed non-refreshing TTL/FIFO behavior, counts calls not consuming snapshot slots,
+atomic failed construction at full retention capacity, multi-record expiry
+accounting, and same-installation broker-restart invalidation. Snapshot lookup,
+remaining races and aggregate retention-byte quota cases, P2.1 broker-owned
+operation tasks, and generalized retention remain open; they must close before
+mutations are advertised.
 
 [`Part 3`](mcp-tool-surface-plan-part-3.md) overlays workflow-efficiency and
 schema decision gates on P2.5, P2.7, P2.8, and release measurement. It does not

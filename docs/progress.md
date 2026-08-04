@@ -78,6 +78,11 @@ Last updated: 2026-08-03
       exact optional/non-null snapshot inputs, output schemas aligned with
       compact false-value omission, and expanded filter, scope, hierarchy,
       cursor, FIFO, expiry, and byte-limit coverage.
+- [x] Closed retained snapshot lifecycle regressions for fixed non-refreshing
+      TTL/FIFO behavior, counts calls not consuming snapshot slots, atomic
+      malformed/oversized failures at full retention capacity, exact multi-record
+      expiry accounting, stable references after failure, and cursor invalidation
+      across same-installation broker restart.
 
 ## Current state
 
@@ -105,9 +110,10 @@ Last updated: 2026-08-03
   with Node. Live Chrome validation is still required across supported platforms
   and restart paths.
 - P2.0 snapshot boundary work now freezes the current MCP discovery schema and a
-  normalized full snapshot result. Snapshot lookup by `browserSnapshotRef`,
-  generalized retention, remaining race coverage, client spikes, and live
-  evidence are still open.
+  normalized full snapshot result and covers retained cursor lifecycle failures.
+  Snapshot lookup by `browserSnapshotRef`, generalized retention, aggregate-byte
+  quota boundaries, remaining race coverage, client spikes, and live evidence
+  are still open.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 

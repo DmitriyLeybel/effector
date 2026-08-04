@@ -29,6 +29,7 @@ pub struct TestBroker {
     child: TestChild,
     address: SocketAddr,
     token: String,
+    state_dir: PathBuf,
 }
 
 pub struct TestChild {
@@ -41,12 +42,17 @@ impl TestBroker {
         let address = reserve_address();
         let token = test_token();
         let state_dir = test_state_dir();
+        Self::spawn_with_installation(address, token, state_dir)
+    }
+
+    pub fn spawn_with_installation(address: SocketAddr, token: String, state_dir: PathBuf) -> Self {
         let child = spawn_native_host(address, Some(&token), &state_dir);
         wait_for_port(address);
         Self {
             child,
             address,
             token,
+            state_dir,
         }
     }
 
@@ -56,6 +62,10 @@ impl TestBroker {
 
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    pub fn state_dir(&self) -> &Path {
+        &self.state_dir
     }
 
     pub fn child_mut(&mut self) -> &mut Child {

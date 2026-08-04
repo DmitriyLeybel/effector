@@ -393,7 +393,7 @@ async fn snapshot_filters_scopes_hierarchy_and_cursor_boundaries_round_trip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn snapshot_fifo_retention_evicts_only_the_oldest_cursor() {
+async fn snapshot_fifo_is_non_refreshing_and_counts_do_not_consume_capacity() {
     let mut broker = TestBroker::spawn();
     let address = broker.address();
     let token = broker.token().to_owned();
@@ -403,7 +403,7 @@ async fn snapshot_fifo_retention_evicts_only_the_oldest_cursor() {
     let client = connect_mcp(address, &token).await;
 
     let mut cursors = Vec::new();
-    for _ in 0..17 {
+    for _ in 0..16 {
         let (result, stdin, stdout) = snapshot_exchange(
             &client,
             native_stdin,
@@ -421,6 +421,55 @@ async fn snapshot_fifo_retention_evicts_only_the_oldest_cursor() {
                 .to_owned(),
         );
     }
+
+    let oldest_replay = client
+        .call_tool(tool_call(json!({"cursor":cursors[0]})))
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot_titles(&oldest_replay.structured_content.unwrap()),
+        ["Direct tab"]
+    );
+
+    for _ in 0..3 {
+        let (counts, stdin, stdout) = snapshot_exchange(
+            &client,
+            native_stdin,
+            native_stdout,
+            json!({"detail":"counts"}),
+            baseline(),
+        )
+        .await;
+        native_stdin = stdin;
+        native_stdout = stdout;
+        assert_eq!(counts.structured_content.unwrap()["tabCount"], 2);
+    }
+
+    let oldest_after_counts = client
+        .call_tool(tool_call(json!({"cursor":cursors[0]})))
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot_titles(&oldest_after_counts.structured_content.unwrap()),
+        ["Direct tab"]
+    );
+
+    let (seventeenth, stdin, stdout) = snapshot_exchange(
+        &client,
+        native_stdin,
+        native_stdout,
+        json!({"limit":1}),
+        baseline(),
+    )
+    .await;
+    native_stdin = stdin;
+    native_stdout = stdout;
+    cursors.push(
+        seventeenth.structured_content.unwrap()["nextCursor"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    );
 
     assert_error_code(
         client
@@ -442,6 +491,181 @@ async fn snapshot_fifo_retention_evicts_only_the_oldest_cursor() {
     client.cancel().await.unwrap();
     broker.restore_native_io(native_stdin, native_stdout);
     broker.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_snapshot_construction_preserves_retained_state_and_references() {
+    let mut broker = TestBroker::spawn();
+    let address = broker.address();
+    let token = broker.token().to_owned();
+    let (mut native_stdin, mut native_stdout) = broker.take_native_io();
+    write_native_frame(&mut native_stdin, &ready(true, 1));
+    assert_eq!(read_native_frame(&mut native_stdout)["type"], "ready_ack");
+    let client = connect_mcp(address, &token).await;
+
+    let (initial, stdin, stdout) = snapshot_exchange(
+        &client,
+        native_stdin,
+        native_stdout,
+        json!({"detail":"full","limit":1}),
+        baseline(),
+    )
+    .await;
+    native_stdin = stdin;
+    native_stdout = stdout;
+    let initial = initial.structured_content.unwrap();
+    let cursor = initial["nextCursor"].as_str().unwrap().to_owned();
+    let grouped_tab_ref = initial["windows"][0]["items"][0]["tabs"][0]["ref"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut retained_cursors = vec![cursor.clone()];
+
+    for _ in 0..15 {
+        let (retained, stdin, stdout) = snapshot_exchange(
+            &client,
+            native_stdin,
+            native_stdout,
+            json!({"limit":1}),
+            baseline(),
+        )
+        .await;
+        native_stdin = stdin;
+        native_stdout = stdout;
+        retained_cursors.push(
+            retained.structured_content.unwrap()["nextCursor"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+
+    let mut malformed = baseline();
+    malformed["modelRevision"] = json!(8);
+    malformed["tabs"][0]["groupKey"] = json!("missing-group");
+    let (malformed_result, stdin, stdout) =
+        snapshot_exchange(&client, native_stdin, native_stdout, json!({}), malformed).await;
+    native_stdin = stdin;
+    native_stdout = stdout;
+    assert_error_code(malformed_result, "INTERNAL_ERROR");
+    assert_eq!(
+        snapshot_titles(
+            &client
+                .call_tool(tool_call(json!({"cursor":cursor})))
+                .await
+                .unwrap()
+                .structured_content
+                .unwrap()
+        ),
+        ["Direct tab"]
+    );
+
+    let mut oversized = baseline();
+    oversized["modelRevision"] = json!(8);
+    oversized["tabs"][0]["title"] = json!("x".repeat(4 * 1024 * 1024));
+    let (oversized_result, stdin, stdout) = snapshot_exchange(
+        &client,
+        native_stdin,
+        native_stdout,
+        json!({"limit":1}),
+        oversized,
+    )
+    .await;
+    native_stdin = stdin;
+    native_stdout = stdout;
+    assert_error_code(oversized_result, "RESULT_TOO_LARGE");
+    assert_eq!(
+        snapshot_titles(
+            &client
+                .call_tool(tool_call(json!({"cursor":cursor})))
+                .await
+                .unwrap()
+                .structured_content
+                .unwrap()
+        ),
+        ["Direct tab"]
+    );
+
+    let (recovered, stdin, stdout) = snapshot_exchange(
+        &client,
+        native_stdin,
+        native_stdout,
+        json!({"detail":"full"}),
+        hierarchy_baseline(),
+    )
+    .await;
+    native_stdin = stdin;
+    native_stdout = stdout;
+    let recovered = recovered.structured_content.unwrap();
+    assert_eq!(
+        recovered["windows"][0]["items"][0]["tabs"][0]["ref"],
+        grouped_tab_ref
+    );
+    assert_error_code(
+        client
+            .call_tool(tool_call(json!({"cursor":retained_cursors[0]})))
+            .await
+            .unwrap(),
+        "HANDLE_EXPIRED",
+    );
+    assert_eq!(
+        snapshot_titles(
+            &client
+                .call_tool(tool_call(json!({"cursor":retained_cursors[1]})))
+                .await
+                .unwrap()
+                .structured_content
+                .unwrap()
+        ),
+        ["Direct tab"]
+    );
+
+    client.cancel().await.unwrap();
+    broker.restore_native_io(native_stdin, native_stdout);
+    broker.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn broker_restart_invalidates_retained_cursors_without_browser_dispatch() {
+    let mut broker = TestBroker::spawn();
+    let address = broker.address();
+    let token = broker.token().to_owned();
+    let state_dir = broker.state_dir().to_owned();
+    let (mut native_stdin, mut native_stdout) = broker.take_native_io();
+    write_native_frame(&mut native_stdin, &ready(true, 1));
+    assert_eq!(read_native_frame(&mut native_stdout)["type"], "ready_ack");
+    let client = connect_mcp(address, &token).await;
+    let (snapshot, native_stdin, native_stdout) = snapshot_exchange(
+        &client,
+        native_stdin,
+        native_stdout,
+        json!({"limit":1}),
+        baseline(),
+    )
+    .await;
+    let cursor = snapshot.structured_content.unwrap()["nextCursor"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    client.cancel().await.unwrap();
+    broker.restore_native_io(native_stdin, native_stdout);
+    broker.shutdown();
+
+    let mut replacement = TestBroker::spawn_with_installation(address, token, state_dir);
+    replacement.write(&ready(true, 1));
+    assert_eq!(replacement.read()["type"], "ready_ack");
+    let replacement_client = connect_mcp(replacement.address(), replacement.token()).await;
+    let expired = tokio::time::timeout(
+        Duration::from_secs(3),
+        replacement_client.call_tool(tool_call(json!({"cursor":cursor}))),
+    )
+    .await
+    .expect("cursor lookup attempted a browser dispatch")
+    .unwrap();
+    assert_error_code(expired, "HANDLE_EXPIRED");
+
+    replacement_client.cancel().await.unwrap();
+    replacement.shutdown();
 }
 
 async fn snapshot_exchange(
