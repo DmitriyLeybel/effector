@@ -1,0 +1,50 @@
+{
+  "browserSnapshotRef": "bs_REF_1",
+  "capturedAt": "2026-08-03T12:00:00Z",
+  "nextCursor": "cur_REF_1",
+  "totalMatched": 2,
+  "windows": [
+    {
+      "alwaysOnTop": false,
+      "focused": true,
+      "height": 800,
+      "items": [
+        {
+          "group": {
+            "collapsed": false,
+            "color": "blue",
+            "ref": "grp_REF_1",
+            "shared": false,
+            "title": "Work"
+          },
+          "tabs": [
+            {
+              "active": true,
+              "audible": false,
+              "autoDiscardable": true,
+              "favIconUrl": "https://example.test/favicon.ico",
+              "frozen": true,
+              "highlighted": true,
+              "lastAccessed": 1234.5,
+              "loading": true,
+              "muted": true,
+              "openerRef": "tab_REF_1",
+              "pendingUrl": "https://example.test/pending",
+              "pinned": true,
+              "ref": "tab_REF_2",
+              "title": "Grouped tab",
+              "url": "https://example.test/grouped"
+            }
+          ]
+        }
+      ],
+      "left": 20,
+      "partial": true,
+      "ref": "win_REF_1",
+      "state": "normal",
+      "top": 10,
+      "type": "normal",
+      "width": 1200
+    }
+  ]
+}

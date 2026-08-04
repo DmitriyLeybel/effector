@@ -1,26 +1,19 @@
+mod support;
+
 use std::{
     io::{BufRead, BufReader, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    process::{Child, Command, Stdio},
-    thread,
-    time::{Duration, Instant},
+    net::{SocketAddr, TcpStream},
 };
 
-use rmcp::{
-    ServiceExt,
-    model::ClientInfo,
-    transport::{
-        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
-    },
-};
+use serde_json::Value;
 
-const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+use support::{TestBroker, assert_json_golden, connect_mcp};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_chrome() {
-    let address = reserve_address();
-    let mut child = spawn_broker(address);
-    wait_for_port(address);
+    let mut broker = TestBroker::spawn();
+    let address = broker.address();
+    let token = broker.token().to_owned();
 
     let unauthorized = raw_initialize(address, &address.to_string(), None, None);
     assert!(unauthorized.starts_with("HTTP/1.1 401"), "{unauthorized}");
@@ -33,7 +26,7 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
         address,
         "example.invalid",
         None,
-        Some(&format!("Bearer {TOKEN}")),
+        Some(&format!("Bearer {token}")),
     );
     assert!(!invalid_host.starts_with("HTTP/1.1 200"), "{invalid_host}");
 
@@ -41,19 +34,27 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
         address,
         &address.to_string(),
         Some("https://example.invalid"),
-        Some(&format!("Bearer {TOKEN}")),
+        Some(&format!("Bearer {token}")),
     );
     assert!(
         !invalid_origin.starts_with("HTTP/1.1 200"),
         "{invalid_origin}"
     );
 
-    let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(format!("http://{address}/mcp"))
-            .auth_header(TOKEN),
-    );
-    let client = ClientInfo::default().serve(transport).await.unwrap();
+    let client = connect_mcp(address, &token).await;
     let tools = client.list_tools(None).await.unwrap();
+    let mut golden_tools: Vec<Value> = tools
+        .tools
+        .iter()
+        .map(|tool| serde_json::to_value(tool).unwrap())
+        .collect();
+    golden_tools.sort_by(|left, right| {
+        left["name"]
+            .as_str()
+            .unwrap()
+            .cmp(right["name"].as_str().unwrap())
+    });
+    assert_json_golden("tests/goldens/tools-list.json", &Value::Array(golden_tools));
     let mut names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
     names.sort_unstable();
     assert_eq!(names, ["browser.list", "browser.snapshot", "tabs.list"]);
@@ -74,42 +75,31 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
     let input_schema = serde_json::to_string(&snapshot.input_schema).unwrap();
     assert!(input_schema.contains("additionalProperties\":false"));
     assert!(!input_schema.contains("\"null\""));
-    let output_schema = serde_json::to_string(snapshot.output_schema.as_ref().unwrap()).unwrap();
+    assert!(snapshot.input_schema.get("required").is_none());
+    let output = snapshot.output_schema.as_ref().unwrap();
+    let output_schema = serde_json::to_string(output).unwrap();
     assert!(output_schema.contains("browserSnapshotRef"));
     assert!(output_schema.contains("additionalProperties\":false"));
+    let is_required = |definition: &str, field: &str| {
+        output["$defs"][definition]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|required| required == field)
+    };
+    for (definition, omitted_when_false) in [
+        ("SnapshotGroup", &["partial"][..]),
+        ("SnapshotTab", &["active", "pinned", "discarded"][..]),
+        ("SnapshotWindow", &["focused", "partial"][..]),
+    ] {
+        for field in omitted_when_false {
+            assert!(!is_required(definition, field));
+        }
+    }
     client.cancel().await.unwrap();
 
-    drop(child.stdin.take());
-    wait_for_exit(&mut child);
+    broker.shutdown();
     assert!(TcpStream::connect(address).is_err());
-}
-
-fn reserve_address() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap()
-}
-
-fn spawn_broker(address: SocketAddr) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_effector"))
-        .arg("native-host")
-        .env("EFFECTOR_MCP_ADDRESS", address.to_string())
-        .env("EFFECTOR_MCP_TOKEN", TOKEN)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap()
-}
-
-fn wait_for_port(address: SocketAddr) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while TcpStream::connect(address).is_err() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert!(
-        TcpStream::connect(address).is_ok(),
-        "MCP endpoint did not bind"
-    );
 }
 
 fn raw_initialize(
@@ -143,19 +133,4 @@ fn raw_initialize(
         response_headers.push_str(&line);
     }
     response_headers
-}
-
-fn wait_for_exit(child: &mut Child) {
-    let deadline = Instant::now() + Duration::from_secs(6);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "broker exited with {status}");
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "broker did not exit after Chrome EOF"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
 }

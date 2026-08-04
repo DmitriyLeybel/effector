@@ -19,9 +19,13 @@ Implementation has started with ADR 0007, the production background-controller
 test seam, and the strict matched-v3 read path. Exact ABI/method negotiation,
 rich capability facts, typed dispatch metadata, and bounded PNG artifact parsing
 are implemented without changing permissions or public tools. P2.0 live/client
-evidence and broad snapshot boundaries remain open, as do P2.1 broker-owned
-operation tasks and generalized retention; they must close before mutations are
-advertised.
+evidence remains open. The first snapshot-boundary slice now includes shared
+process-test support, deterministic current-tool schema and representative-result
+goldens, optional/non-null input-schema correction, compact-output omission
+alignment, filter/scope/hierarchy coverage, cursor FIFO/expiry checks, and exact
+result-size boundaries. Snapshot lookup, remaining races and retention cases,
+P2.1 broker-owned operation tasks, and generalized retention remain open; they
+must close before mutations are advertised.
 
 [`Part 3`](mcp-tool-surface-plan-part-3.md) overlays workflow-efficiency and
 schema decision gates on P2.5, P2.7, P2.8, and release measurement. It does not

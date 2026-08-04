@@ -1,0 +1,479 @@
+[
+  {
+    "description": "List the connected real Chrome browser instance and inventory counts",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "browser.list"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Return a compact, stable page of the connected Chrome window, Tab Group, and tab hierarchy without activating or waking tabs",
+    "inputSchema": {
+      "$defs": {
+        "SnapshotDetail": {
+          "enum": [
+            "counts",
+            "compact",
+            "full"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "description": "Match tabs whose active state equals this value.",
+          "type": "boolean"
+        },
+        "cursor": {
+          "description": "Continue an immutable retained browser snapshot.",
+          "type": "string"
+        },
+        "detail": {
+          "$ref": "#/$defs/SnapshotDetail",
+          "description": "Return counts, compact identification data, or full metadata. Defaults to compact."
+        },
+        "discarded": {
+          "description": "Match tabs whose discarded state equals this value.",
+          "type": "boolean"
+        },
+        "frozen": {
+          "description": "Match tabs whose frozen state equals this value.",
+          "type": "boolean"
+        },
+        "groupRef": {
+          "description": "Restrict results to one exact Tab Group.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum matching tabs in this page. Defaults to 100.",
+          "format": "uint",
+          "maximum": 250,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "pinned": {
+          "description": "Match tabs whose pinned state equals this value.",
+          "type": "boolean"
+        },
+        "query": {
+          "description": "Case-insensitive non-empty substring matched against tab title or URL, up to 4096 UTF-8 bytes.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "tabRefs": {
+          "description": "Restrict results to these exact tabs.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 250,
+          "minItems": 1,
+          "type": "array"
+        },
+        "windowRef": {
+          "description": "Restrict results to one exact window.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "browser.snapshot",
+    "outputSchema": {
+      "$defs": {
+        "DomainError": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "type": "object"
+        },
+        "SnapshotCounts": {
+          "additionalProperties": false,
+          "properties": {
+            "discardedTabCount": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "groupCount": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tabCount": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "windowCount": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "windowCount",
+            "groupCount",
+            "tabCount",
+            "discardedTabCount"
+          ],
+          "type": "object"
+        },
+        "SnapshotGroup": {
+          "additionalProperties": false,
+          "properties": {
+            "collapsed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "color": {
+              "type": "string"
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "shared": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ref",
+            "color"
+          ],
+          "type": "object"
+        },
+        "SnapshotGroupItem": {
+          "additionalProperties": false,
+          "properties": {
+            "group": {
+              "$ref": "#/$defs/SnapshotGroup"
+            },
+            "tabs": {
+              "items": {
+                "$ref": "#/$defs/SnapshotTab"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "group",
+            "tabs"
+          ],
+          "type": "object"
+        },
+        "SnapshotItem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SnapshotGroupItem"
+            },
+            {
+              "$ref": "#/$defs/SnapshotTab"
+            }
+          ]
+        },
+        "SnapshotPage": {
+          "additionalProperties": false,
+          "properties": {
+            "browserSnapshotRef": {
+              "type": "string"
+            },
+            "capturedAt": {
+              "type": "string"
+            },
+            "nextCursor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "totalMatched": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "windows": {
+              "items": {
+                "$ref": "#/$defs/SnapshotWindow"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "browserSnapshotRef",
+            "capturedAt",
+            "totalMatched",
+            "windows"
+          ],
+          "type": "object"
+        },
+        "SnapshotTab": {
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "audible": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "autoDiscardable": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "discarded": {
+              "type": "boolean"
+            },
+            "favIconUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "frozen": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "highlighted": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "lastAccessed": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "loading": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "muted": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "openerRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pendingUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pinned": {
+              "type": "boolean"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "type": "object"
+        },
+        "SnapshotWindow": {
+          "additionalProperties": false,
+          "properties": {
+            "alwaysOnTop": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "focused": {
+              "type": "boolean"
+            },
+            "height": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/SnapshotItem"
+              },
+              "type": "array"
+            },
+            "left": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "partial": {
+              "type": "boolean"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "state": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "top": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "format": "int32",
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ref",
+            "items"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SnapshotCounts"
+        },
+        {
+          "$ref": "#/$defs/SnapshotPage"
+        },
+        {
+          "$ref": "#/$defs/DomainError"
+        }
+      ],
+      "title": "BrowserSnapshotToolOutput"
+    }
+  },
+  {
+    "description": "List real Chrome windows, tab groups, and a bounded page of tab metadata without activating discarded tabs",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "activeOnly": {
+          "description": "Only return active tabs.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cursor": {
+          "description": "Zero-based offset returned as nextCursor by the preceding page.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "discardedOnly": {
+          "description": "Only return discarded tabs without waking them.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "groupId": {
+          "description": "Only return tabs in this Chrome tab group. Use -1 for ungrouped tabs.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Maximum tabs in this page. Defaults to 100 and is capped at 250.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "windowId": {
+          "description": "Only return tabs in this Chrome window.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "tabs.list"
+  }
+]

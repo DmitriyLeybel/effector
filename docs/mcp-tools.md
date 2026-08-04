@@ -123,7 +123,7 @@ window, Tab Group, and tab hierarchy without activating or waking tabs.
 | `pinned` | boolean | either | Match tabs whose pinned state equals this value. |
 | `discarded` | boolean | either | Match tabs whose discarded state equals this value without waking them. |
 | `frozen` | boolean | either | Match tabs whose frozen state equals this value without unfreezing them. |
-| `query` | non-empty string | none | Case-insensitive substring match against tab title or URL metadata. |
+| `query` | non-empty string, at most 4096 UTF-8 bytes | none | Case-insensitive substring match against tab title or URL metadata. |
 | `detail` | `counts`, `compact`, or `full` | `compact` | Return only counts, the normal identification fields, or secondary metadata. |
 | `limit` | integer, 1 through 250 | `100` | Return at most this many matching tabs. |
 | `cursor` | opaque string | none | Continue the exact retained snapshot and query represented by this cursor. |

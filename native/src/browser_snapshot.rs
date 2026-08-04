@@ -46,36 +46,47 @@ pub(crate) enum SnapshotDetail {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct BrowserSnapshotParams {
     /// Restrict results to one exact window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "WindowRef")]
     pub window_ref: Option<WindowRef>,
     /// Restrict results to one exact Tab Group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "GroupRef")]
     pub group_ref: Option<GroupRef>,
     /// Restrict results to these exact tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Vec<TabRef>", length(min = 1, max = 250))]
     pub tab_refs: Option<Vec<TabRef>>,
     /// Match tabs whose active state equals this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "bool")]
     pub active: Option<bool>,
     /// Match tabs whose pinned state equals this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "bool")]
     pub pinned: Option<bool>,
     /// Match tabs whose discarded state equals this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "bool")]
     pub discarded: Option<bool>,
     /// Match tabs whose frozen state equals this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "bool")]
     pub frozen: Option<bool>,
-    /// Case-insensitive non-empty substring matched against tab title or URL.
-    #[schemars(with = "String", length(min = 1, max = 4096))]
+    /// Case-insensitive non-empty substring matched against tab title or URL, up to 4096 UTF-8 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "String", length(min = 1))]
     pub query: Option<String>,
     /// Return counts, compact identification data, or full metadata. Defaults to compact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "SnapshotDetail")]
     pub detail: Option<SnapshotDetail>,
     /// Maximum matching tabs in this page. Defaults to 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "usize", range(min = 1, max = 250))]
     pub limit: Option<usize>,
     /// Continue an immutable retained browser snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
     pub cursor: Option<String>,
 }
@@ -499,10 +510,10 @@ pub(crate) struct SnapshotPage {
 struct SnapshotWindow {
     #[serde(rename = "ref")]
     reference: String,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     focused: bool,
     items: Vec<SnapshotItem>,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     partial: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     top: Option<i32>,
@@ -542,7 +553,7 @@ struct SnapshotGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     color: String,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     partial: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     collapsed: Option<bool>,
@@ -559,11 +570,11 @@ struct SnapshotTab {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     active: bool,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     pinned: bool,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "is_false")]
     discarded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     frozen: Option<bool>,
@@ -1156,9 +1167,20 @@ fn project_tab(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
+
     use serde_json::json;
 
-    use super::{Baseline, BrowserSnapshotParams, SnapshotDetail, decode_params};
+    use crate::runtime::BrokerRuntime;
+
+    use super::{
+        Baseline, BrowserSnapshotParams, MAX_RESULT_BYTES, SNAPSHOT_TTL, SnapshotDetail,
+        SnapshotReferences, StoredSnapshot, continue_snapshot, decode_params, render_page,
+        retained_size,
+    };
 
     #[test]
     fn baseline_rejects_unknown_fields_and_duplicate_indexes() {
@@ -1215,5 +1237,129 @@ mod tests {
         });
         let baseline: Baseline = serde_json::from_value(missing_frozen).unwrap();
         assert!(baseline.validate("browser").is_err());
+    }
+
+    #[test]
+    fn parameter_byte_count_and_collection_boundaries_are_exact() {
+        let exact_query = BrowserSnapshotParams {
+            query: Some("é".repeat(2048)),
+            ..Default::default()
+        };
+        assert!(exact_query.validate().is_ok());
+        let oversized_query = BrowserSnapshotParams {
+            query: Some(format!("{}x", "é".repeat(2048))),
+            ..Default::default()
+        };
+        assert_eq!(
+            oversized_query.validate().unwrap_err().code,
+            "INVALID_ARGUMENT"
+        );
+
+        let exact_refs = BrowserSnapshotParams {
+            tab_refs: Some(
+                (0..250)
+                    .map(|index| super::TabRef(format!("tab_{index}")))
+                    .collect(),
+            ),
+            limit: Some(250),
+            ..Default::default()
+        };
+        assert!(exact_refs.validate().is_ok());
+        let oversized_refs = BrowserSnapshotParams {
+            tab_refs: Some(
+                (0..251)
+                    .map(|index| super::TabRef(format!("tab_{index}")))
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(
+            oversized_refs.validate().unwrap_err().code,
+            "INVALID_ARGUMENT"
+        );
+        for limit in [0, 251] {
+            let params = BrowserSnapshotParams {
+                limit: Some(limit),
+                ..Default::default()
+            };
+            assert_eq!(params.validate().unwrap_err().code, "INVALID_ARGUMENT");
+        }
+    }
+
+    #[test]
+    fn one_record_honors_the_exact_result_byte_limit() {
+        let mut probe = stored_snapshot("x".to_owned());
+        let probe_size = serde_json::to_vec(&render_page(&mut probe, 0).unwrap())
+            .unwrap()
+            .len();
+        let exact_title_len = MAX_RESULT_BYTES - probe_size + 1;
+        let mut exact = stored_snapshot("x".repeat(exact_title_len));
+        let exact_page = render_page(&mut exact, 0).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&exact_page).unwrap().len(),
+            MAX_RESULT_BYTES
+        );
+
+        let mut oversized = stored_snapshot("x".repeat(exact_title_len + 1));
+        assert_eq!(
+            render_page(&mut oversized, 0).unwrap_err().code,
+            "RESULT_TOO_LARGE"
+        );
+    }
+
+    #[test]
+    fn expired_cursor_is_removed_before_lookup() {
+        let runtime = BrokerRuntime::new();
+        let mut snapshot = stored_snapshot("title".to_owned());
+        snapshot.created_at = Instant::now() - SNAPSHOT_TTL - Duration::from_millis(1);
+        snapshot.cursors.insert("cur_expired".to_owned(), 0);
+        snapshot.retained_bytes = retained_size(&snapshot).unwrap();
+        {
+            let mut state = runtime.state();
+            state.snapshot_bytes = snapshot.retained_bytes;
+            state.snapshots.push_back(snapshot);
+        }
+
+        assert_eq!(
+            continue_snapshot(&runtime, "cur_expired").unwrap_err().code,
+            "HANDLE_EXPIRED"
+        );
+        let state = runtime.state();
+        assert!(state.snapshots.is_empty());
+        assert_eq!(state.snapshot_bytes, 0);
+    }
+
+    fn stored_snapshot(title: String) -> StoredSnapshot {
+        let baseline: Baseline = serde_json::from_value(json!({
+            "browserInstanceId": "browser",
+            "modelRevision": 1,
+            "capturedAt": "2026-08-03T12:00:00Z",
+            "supportsFrozenTabs": false,
+            "supportsSharedTabGroups": false,
+            "windows": [{"key":"window-key","id":1,"focused":true}],
+            "groups": [],
+            "tabs": [{
+                "key":"tab-key","id":1,"windowKey":"window-key","index":0,
+                "title":title,"active":true,"highlighted":true,"pinned":false,
+                "discarded":false
+            }]
+        }))
+        .unwrap();
+        StoredSnapshot {
+            snapshot_ref: "bs_test".to_owned(),
+            created_at: Instant::now(),
+            retained_bytes: 0,
+            baseline,
+            references: SnapshotReferences {
+                windows: HashMap::from([("window-key".to_owned(), "win_test".to_owned())]),
+                groups: HashMap::new(),
+                tabs: HashMap::from([("tab-key".to_owned(), "tab_test".to_owned())]),
+            },
+            matched_tab_keys: vec!["tab-key".to_owned()],
+            detail: SnapshotDetail::Compact,
+            limit: 1,
+            cursors: HashMap::new(),
+            cursor_by_offset: HashMap::new(),
+        }
     }
 }

@@ -73,6 +73,11 @@ Last updated: 2026-08-03
       P3.0 corpus. G3.0/G3.1 pass; bounded `page.act` sequences fail G3.2 and are
       rejected for V1, leaving singular action plus `inspectAfter` and explicit
       inspection loops.
+- [x] Started P2.0 boundary closure with a shared isolated broker test harness,
+      deterministic current-tool schema and representative snapshot goldens,
+      exact optional/non-null snapshot inputs, output schemas aligned with
+      compact false-value omission, and expanded filter, scope, hierarchy,
+      cursor, FIFO, expiry, and byte-limit coverage.
 
 ## Current state
 
@@ -99,6 +104,10 @@ Last updated: 2026-08-03
   controller tests; the new JavaScript tests still need to run in an environment
   with Node. Live Chrome validation is still required across supported platforms
   and restart paths.
+- P2.0 snapshot boundary work now freezes the current MCP discovery schema and a
+  normalized full snapshot result. Snapshot lookup by `browserSnapshotRef`,
+  generalized retention, remaining race coverage, client spikes, and live
+  evidence are still open.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 
