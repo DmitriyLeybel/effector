@@ -1,7 +1,7 @@
 # Process and transport model
 
-Status: implemented spike
-Last updated: 2026-08-02
+Status: implemented transport and protocol v3 read foundation
+Last updated: 2026-08-03
 
 ## Process roles
 
@@ -21,8 +21,17 @@ clients do not launch another Effector process.
 - Chrome Native Messaging only.
 - Length-prefixed JSON messages.
 - Long-lived `runtime.connectNative()` port.
-- Request IDs, protocol versions, deadlines, and structured errors.
+- Implemented protocol v3 request IDs, strict handshake/version/ABI checks,
+  implementation intersection, browser response identity, capability revisions,
+  typed errors and dispatch state, read deadlines, and correlated responses.
 - Reconnect with bounded exponential backoff after `onDisconnect`.
+
+Protocol v3 preserves `ready`, `ready_ack`, `request`, `response`, and
+`requestId`. It adds an exact envelope ABI, method/branch implementation
+manifests, rich complete capability state, typed dispatch metadata, typed PNG
+artifacts, and allowlisted request-class deadline metadata. Rust and extension
+versions change together; old/new mismatches fail visibly rather than
+downgrading. The current three read methods permit no artifacts or side effects.
 
 ### Harness to broker
 
@@ -73,6 +82,47 @@ not launch Chrome implicitly.
 
 No internal proxy protocol or broker discovery file participates in this path.
 
+## Retained-state flow
+
+Steps 1 through 5 are implemented for `browser.snapshot`. Mutation preview and
+apply in step 6 remain future work.
+
+1. The extension reconciles Chrome events and queries into one complete
+   normalized baseline with internal object-incarnation keys.
+2. The broker validates and retains the complete bounded baseline in memory.
+3. The broker derives filters and immutable compact/full snapshot pages from
+   that retained state. The focused window comes first; other windows use
+   ascending runtime Chrome window ID order.
+4. Random server-side cursors point to the retained snapshot and next position.
+   Cursor reads do not query Chrome or refresh expiry.
+5. Counts are computed without retaining a snapshot or cursor. Unsupported
+   filters such as `frozen` on an older Chrome fail instead of treating the
+   missing field as false.
+6. Preview resolves public references against one retained snapshot and creates
+   an exact memory-only plan. Apply rechecks relevant incarnation and property
+   preconditions in the extension and executes non-atomically.
+
+Browser/page snapshot, cursor, plan, and artifact stores use bounded FIFO
+eviction and fixed creation-time TTLs. The extension persists global toggle
+choices; broker references, baselines, snapshots, cursors, plans, artifacts,
+and deduplication results do not survive broker restart.
+
+## Accepted page flow
+
+This is also target behavior, not a currently available page-tool surface.
+Protocol v3 capability facts represent implementation, desired setting, granted
+Chrome permission, API/probe support, effective state, and one safe reason.
+Capability changes can alter MCP discovery, while extension dispatch always
+rechecks authority.
+
+Page semantics and structured actions use a fixed isolated-world page agent.
+Visual inspection captures only the current viewport of a tab already active in
+its own window and verifies activation, document, viewport, and scroll identity
+around capture. `inspectAfter` reuses that pipeline after one action. Advanced
+evaluation is separately enabled and uses exact-document isolated
+`userScripts` execution on supported Chrome versions. The accepted flow does not
+attach a debugger, activate targets implicitly, or provide full-page capture.
+
 ## Multiple Chrome profiles
 
 Each profile can ask Chrome to launch a separate native host, but only one
@@ -94,7 +144,11 @@ supported.
 
 ## Backpressure and limits
 
-The broker uses a bounded Native Messaging writer queue and a 30-second browser
-request deadline. Inventory tools page results to avoid oversized Native
-Messaging and MCP payloads. Further mutation work must add explicit concurrency
-limits, snapshot revisions, and cancellation-aware operation handling.
+The broker uses a bounded Native Messaging writer queue, a 30-second broker read
+deadline, and a 29-second extension read deadline. It rejects requests over the
+product limit before pending insertion or writer queueing. Protocol v3 owns and
+validates one bounded PNG artifact shape, but current methods reject artifacts.
+Browser snapshots use complete bounded baselines, FIFO retained stores, fixed
+non-refreshing TTLs, and explicit count/byte limits. Mutation-specific task
+ownership and cancellation-aware non-atomic outcome handling remain
+unimplemented.

@@ -23,13 +23,15 @@
 
 ## Phase 2: complete read model
 
-- [ ] Complete hierarchical window/group/tab reads beyond page-local context.
+- [x] Complete hierarchical window/group/tab reads beyond page-local context.
 - [x] Tab filtering and pagination.
 - [ ] Field selection.
 - [x] Browser instance IDs.
-- [ ] Snapshot revision IDs.
-- [ ] Chrome event aggregation and resynchronization.
+- [x] Snapshot revision IDs.
+- [x] Chrome event aggregation and resynchronization.
 - [ ] Multiple Chrome-profile routing.
+- [x] Implement the proposed `browser.snapshot` contract with opaque references
+      and immutable pagination.
 
 ## Phase 3: controlled mutations
 
@@ -37,6 +39,11 @@
 - [ ] Create, focus, update, and close windows.
 - [ ] Group, ungroup, move, rename, recolor, and collapse Tab Groups.
 - [ ] Typed stale-state conflicts and dry-run support for bulk operations.
+- [ ] Implement `browser.change` preview, exact target preconditions, and concise
+      process-local apply results.
+- [ ] Add the global Browser changes toggle and complete typed operations.
+- [ ] Defer undo until a concrete workflow justifies its retained-state and
+      schema cost.
 
 ## Phase 4: user experience and packaging
 
@@ -60,4 +67,18 @@
 - [ ] Optional PTY/ConPTY terminal mode for important non-ACP CLIs.
 - [ ] Evaluate ACP v2 and MCP-over-ACP after their draft features stabilize.
 - [ ] Optional page-content capability with separate permissions.
-- [ ] Reconsider CDP only for a demonstrated gap that Chrome APIs cannot fill.
+- [ ] Add bounded active-viewport visual inspection without implicit activation;
+      keep full-page/background debugger capture delegated.
+- [ ] Later evaluate a debugger-capable extension manifest for non-active-tab and
+      full-page capture; do not add `debugger` to the V1 core manifest.
+- [ ] Under accepted ADR 0006, add one global Page tools grant and stage semantic
+      `page.inspect` and typed `page.act`.
+- [ ] Add globally enabled advanced `page.evaluate` only after typed page tools.
+
+The detailed target contract and dependency plan are in
+[`mcp-tools.md`](mcp-tools.md) and
+[`mcp-tool-surface-plan.md`](mcp-tool-surface-plan.md). The code-grounded
+continuation is
+[`mcp-tool-surface-plan-part-2.md`](mcp-tool-surface-plan-part-2.md). Workflow
+efficiency and final page-action schema gates are in
+[`mcp-tool-surface-plan-part-3.md`](mcp-tool-surface-plan-part-3.md).

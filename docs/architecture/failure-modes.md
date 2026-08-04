@@ -1,6 +1,6 @@
 # Failure modes and recovery
 
-Status: implementation draft
+Status: implemented failures; accepted target foundations
 Last updated: 2026-08-03
 
 | Failure | Observable result | Required recovery |
@@ -18,25 +18,47 @@ Last updated: 2026-08-03
 | Multiple Chrome profiles connect | Only one broker can own the fixed endpoint | The additional broker fails visibly; close the other profile before retrying |
 | MCP port is already owned | Another profile or process owns the fixed endpoint | Fail visibly; do not attach to or terminate an unknown process |
 
-## Planned failure handling
+## Accepted target failure handling
 
-The following rows describe requirements for mutation, workspace, side-panel,
-and snapshot features that are not implemented yet.
+The protocol, browser baseline, snapshot, cursor, count, frozen-filter, browser
+restart, and broker-restart rows below are implemented foundations from ADR
+0005. Mutation and page rows remain required future behavior from ADRs 0005 and
+0006.
 
-| Failure | Risk | Required future behavior |
+| Failure | Risk | Required behavior |
 | --- | --- | --- |
-| User changes tabs during a command | Snapshot revision becomes stale | Commands accept expected revision where needed and return conflict information |
-| Tab disappears before mutation | Chrome returns missing tab | Return a typed `not_found`; never reuse the old ID |
-| Chrome restarts and reuses numeric IDs | Stale references could target the wrong tab | Namespace IDs with browser runtime epoch and reject stale epochs |
+| Protocol v2 and v3 components are mixed, or v3 ABI revisions conflict | Capability, dispatch, or artifact fields could be misread | Fail the handshake visibly with no downgrade; broker and extension upgrade together |
+| Complete browser baseline exceeds retention bounds | A partial baseline could look authoritative | Reject the snapshot as too large; never fall back to a live or incomplete baseline |
+| Snapshot, cursor, or plan reaches fixed TTL | A stale handle could prolong sensitive state | Return handle-expired; reads never refresh TTL |
+| FIFO store reaches its object or byte bound | New retained state cannot fit | Evict the oldest eligible retained record and invalidate its dependent handles |
+| Caller tampers with or invents a cursor | Pagination authority is untrusted | Accept only random server-side cursor handles tied to retained immutable state |
+| Counts call completes | Counts could become an unintended retained inventory | Return counts without retaining a snapshot, cursor, or count record |
+| `frozen` filter is requested where Chrome cannot report it | Missing could be mistaken for false | Return capability-unavailable or unsupported rather than an incorrect match set |
+| User changes relevant target state after preview | A mutation could affect unintended state | Recheck exact incarnation and operation-specific preconditions before each operation |
+| Tab disappears before mutation | Chrome returns missing tab | Return typed not-found; never reuse the old ID |
+| Chrome restarts and reuses numeric IDs | A stale reference could target a new object | Use random incarnations and broker refs; reject every pre-restart public handle |
+| One operation in a plan fails | Earlier Chrome operations may already have committed | Return ordered partial, failed, and skipped outcomes; do not claim atomic rollback |
+| Mutation response is lost after dispatch | Retrying could duplicate a side effect | Return unknown when certainty is lost and require a fresh snapshot before retry decisions |
+| Broker restarts | Public refs and deduplication state disappear while extension toggles survive | Expire all broker handles and plans; reconnect and acquire fresh snapshots |
+| Global page permission is revoked | Discovery or an in-flight call may be stale | Update the complete protocol v3 capability state and recheck in the extension before dispatch |
+| Visual target is not already active in its window | Capture could return the wrong tab | Fail before capture or action preflight; never activate implicitly |
+| Activation, document, viewport, or scroll changes during capture | Image attribution becomes uncertain | Reject the image and require a fresh inspection |
+| Action succeeds but `inspectAfter` fails | Reporting the action as failed invites a duplicate effect | Preserve action success and return a compact inspection error |
+| Isolated evaluation times out after dispatch | Page code may still run or take effect | Return unknown; do not claim cancellation or retry automatically |
 | Side-panel message has no compatible harness | Nothing can consume it | Keep bounded pending state or return unsupported; do not silently launch arbitrary commands |
 | Incognito requested without access | Partial inventory | Report capability state and keep normal/incognito routing separate |
 
 ## Safety defaults
 
-The implemented default is simple: only read tools are available. Future
-mutation work must preserve these requirements:
+The implemented default is simple: only read tools are available. Current and
+future implementation under the accepted ADRs must preserve these requirements:
 
-- Mutation requests identify exact browser instance and tab/group/window IDs.
-- Bulk/destructive operations support dry-run previews or confirmations.
+- Mutation requests use exact process-local public references backed by browser
+  and object incarnations, not public Chrome numeric IDs.
+- Bulk/destructive operations use immutable preview plans.
 - Timeouts do not imply cancellation succeeded; late results carry request IDs.
-- Reconnection always begins with a fresh inventory revision.
+- Reconnection always begins with fresh broker references and snapshots.
+- Extension capability toggles persist, but broker references, snapshots,
+  cursors, and plans never do.
+- Page reads do not activate, focus, scroll, reload, attach a debugger, or wake
+  tabs implicitly.

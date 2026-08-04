@@ -18,9 +18,10 @@ does not launch Chrome.
 ## `effector doctor`
 
 `effector doctor` loads the default or `EFFECTOR_MCP_ADDRESS` endpoint and loads
-or creates the persistent token, connects to MCP, and calls `browser.list`. A
-successful result proves that the broker, credential, Native Messaging
-connection, extension, and browser request path are working. Supply the same
+or creates the persistent token, connects to MCP, and calls
+`browser.snapshot` with `detail="counts"`. A successful result proves that the
+broker, credential, Native Messaging connection, extension, and browser request
+path are working without printing title or URL inventory. Supply the same
 address override to `doctor` if the broker uses one for testing.
 
 Run the executable installed for the same operating-system user as Chrome. For

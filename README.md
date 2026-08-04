@@ -32,11 +32,12 @@ open, where it is organized, and which browser instance it belongs to.
 
 | Tool | Purpose |
 | --- | --- |
+| `browser.snapshot` | Read a stable hierarchical browser snapshot with opaque references and immutable pagination. |
 | `browser.list` | Identify the connected Chrome instance and summarize its windows and tabs. |
-| `tabs.list` | Browse tabs with filters for window, group, active state, pinned state, and discarded state. |
+| `tabs.list` | Browse live tab pages with legacy filters for window, group, active state, and discarded state. |
 
-Results are bounded and paginated, making them practical for large real-world
-browser sessions.
+`browser.list` and `tabs.list` remain temporarily for migration. Results are
+bounded and paginated, making them practical for large real-world sessions.
 
 ## Quick Start
 

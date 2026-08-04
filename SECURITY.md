@@ -27,6 +27,10 @@ Effector's current security boundary depends on all of the following:
 - The Native Messaging manifest allowlists one exact extension origin.
 - MCP binds only to loopback and requires a random bearer token.
 - MCP validates Host and Origin headers.
+- Native Messaging protocol version 3 binds responses to the connected browser
+  identity and strictly validates capability, request, and response envelopes.
+- New browser snapshots expose random process-local references rather than
+  Chrome numeric IDs and retain bounded state only in broker memory.
 - Incognito access, page content, arbitrary Chrome API forwarding, and shell
   execution are not available.
 

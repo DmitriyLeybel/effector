@@ -9,16 +9,25 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::broker::BrowserRequestHandle;
+use crate::{
+    broker::BrowserRequestHandle,
+    browser_snapshot::{
+        BrowserSnapshotParams, BrowserSnapshotToolOutput, decode_params,
+        execute as execute_browser_snapshot,
+    },
+    protocol::{BrowserMethod, DomainError},
+    runtime::BrokerRuntime,
+};
 
 #[derive(Clone)]
 pub(crate) struct EffectorMcp {
     browser: BrowserRequestHandle,
+    runtime: BrokerRuntime,
 }
 
 impl EffectorMcp {
-    pub(crate) fn new(browser: BrowserRequestHandle) -> Self {
-        Self { browser }
+    pub(crate) fn new(browser: BrowserRequestHandle, runtime: BrokerRuntime) -> Self {
+        Self { browser, runtime }
     }
 }
 
@@ -46,7 +55,35 @@ impl EffectorMcp {
         description = "List the connected real Chrome browser instance and inventory counts"
     )]
     async fn browser_list(&self) -> Result<CallToolResult, McpError> {
-        Ok(self.forward("browser.list", json!({})).await)
+        Ok(self.forward(BrowserMethod::BrowserList, json!({})).await)
+    }
+
+    #[tool(
+        name = "browser.snapshot",
+        description = "Return a compact, stable page of the connected Chrome window, Tab Group, and tab hierarchy without activating or waking tabs",
+        input_schema = rmcp::handler::server::common::schema_for_input::<BrowserSnapshotParams>()
+            .unwrap_or_else(|error| panic!("invalid browser.snapshot input schema: {error}")),
+        output_schema = rmcp::handler::server::tool::schema_for_type::<BrowserSnapshotToolOutput>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn browser_snapshot(
+        &self,
+        Parameters(params): Parameters<Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let params = match decode_params(params) {
+            Ok(params) => params,
+            Err(error) => {
+                return Ok(snapshot_result(
+                    BrowserSnapshotToolOutput::Error(error),
+                    true,
+                ));
+            }
+        };
+        let output = execute_browser_snapshot(&self.runtime, &self.browser, params).await;
+        Ok(match output {
+            Ok(output) => snapshot_result(output, false),
+            Err(error) => snapshot_result(BrowserSnapshotToolOutput::Error(error), true),
+        })
     }
 
     #[tool(
@@ -58,10 +95,10 @@ impl EffectorMcp {
         Parameters(params): Parameters<TabsListParams>,
     ) -> Result<CallToolResult, McpError> {
         let params = serde_json::to_value(params).unwrap_or_else(|_| json!({}));
-        Ok(self.forward("tabs.list", params).await)
+        Ok(self.forward(BrowserMethod::TabsList, params).await)
     }
 
-    async fn forward(&self, method: &str, params: Value) -> CallToolResult {
+    async fn forward(&self, method: BrowserMethod, params: Value) -> CallToolResult {
         match self.browser.request(method, params).await {
             Ok(result) => {
                 let text =
@@ -75,4 +112,25 @@ impl EffectorMcp {
             ))]),
         }
     }
+}
+
+fn snapshot_result(output: BrowserSnapshotToolOutput, is_error: bool) -> CallToolResult {
+    let summary = output.summary();
+    let structured = match serde_json::to_value(&output) {
+        Ok(structured) => structured,
+        Err(_) => {
+            let fallback = BrowserSnapshotToolOutput::Error(DomainError::new(
+                "INTERNAL_ERROR",
+                "The browser snapshot result could not be serialized.",
+            ));
+            return snapshot_result(fallback, true);
+        }
+    };
+    let mut result = if is_error {
+        CallToolResult::error(vec![ContentBlock::text(summary)])
+    } else {
+        CallToolResult::success(vec![ContentBlock::text(summary)])
+    };
+    result.structured_content = Some(structured);
+    result
 }

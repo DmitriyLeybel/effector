@@ -1,17 +1,9 @@
-const NATIVE_HOST = "com.effector.browser";
-const INTERNAL_PROTOCOL_VERSION = 1;
+import browserModel from "./browser-model.js";
+import { createBackgroundController } from "./background-controller.js";
+
 const MAX_PAGE_SIZE = 250;
-const MAX_RESPONSE_BYTES = 60 * 1024 * 1024;
 const runtimeEpoch = crypto.randomUUID();
 const installationIdPromise = loadInstallationId();
-
-let nativePort = null;
-let brokerReady = false;
-let reconnectAttempt = 0;
-let reconnectTimer = null;
-let lastError = null;
-let connectedAt = null;
-let mcpEndpoint = null;
 
 async function loadInstallationId() {
   const stored = await chrome.storage.local.get(["installationId", "browserInstanceId"]);
@@ -30,141 +22,23 @@ async function browserInstanceId() {
   return `${await installationIdPromise}:${runtimeEpoch}`;
 }
 
-function connectBroker() {
-  if (nativePort) return;
-  clearTimeout(reconnectTimer);
-
-  try {
-    const port = chrome.runtime.connectNative(NATIVE_HOST);
-    nativePort = port;
-    brokerReady = false;
-    lastError = null;
-    connectedAt = new Date().toISOString();
-
-    port.onMessage.addListener((message) => handleNativeMessage(port, message));
-    port.onDisconnect.addListener(() => {
-      if (nativePort !== port) return;
-      lastError = chrome.runtime.lastError?.message ?? lastError ?? "Native broker disconnected";
-      nativePort = null;
-      brokerReady = false;
-      connectedAt = null;
-      mcpEndpoint = null;
-      scheduleReconnect();
-    });
-
-    void sendReady(port).catch((error) => {
-      if (nativePort === port) {
-        lastError = error?.message ?? String(error);
-        port.disconnect();
-      }
-    });
-  } catch (error) {
-    lastError = error?.message ?? String(error);
-    nativePort = null;
-    scheduleReconnect();
-  }
-}
-
-function scheduleReconnect() {
-  clearTimeout(reconnectTimer);
-  const delay = Math.min(30_000, 500 * (2 ** reconnectAttempt));
-  reconnectAttempt = Math.min(reconnectAttempt + 1, 6);
-  reconnectTimer = setTimeout(connectBroker, delay);
-}
-
-async function sendReady(port) {
-  const message = {
-    type: "ready",
-    protocolVersion: INTERNAL_PROTOCOL_VERSION,
-    browserInstanceId: await browserInstanceId(),
-    extensionId: chrome.runtime.id,
-    extensionVersion: chrome.runtime.getManifest().version,
-    userAgent: navigator.userAgent
-  };
-  if (nativePort === port) port.postMessage(message);
-}
-
-async function handleNativeMessage(port, message) {
-  if (nativePort !== port) return;
-  if (message?.type === "ready_ack") {
-    if (
-      message.protocolVersion !== INTERNAL_PROTOCOL_VERSION ||
-      typeof message.mcpEndpoint !== "string" ||
-      !message.mcpEndpoint
-    ) {
-      lastError = "Native broker returned an incompatible handshake";
-      port.disconnect();
-      return;
-    }
-    reconnectAttempt = 0;
-    brokerReady = true;
-    mcpEndpoint = message.mcpEndpoint;
-    return;
-  }
-  if (
-    message?.type !== "request" ||
-    typeof message.requestId !== "string" ||
-    typeof message.method !== "string"
-  ) return;
-
-  if (!brokerReady) {
-    port.postMessage({
-      type: "response",
-      requestId: message.requestId,
-      ok: false,
-      error: {
-        code: "protocol_not_ready",
-        message: "Native broker handshake is not complete"
-      }
-    });
-    return;
-  }
-
-  try {
-    const result = await dispatch(message.method, message.params ?? {});
-    if (nativePort === port) {
-      const response = {
-        type: "response",
-        requestId: message.requestId,
-        ok: true,
-        result
-      };
-      if (new TextEncoder().encode(JSON.stringify(response)).byteLength > MAX_RESPONSE_BYTES) {
-        throw Object.assign(new Error("Chrome response exceeded the safe message size"), {
-          code: "response_too_large"
-        });
-      }
-      port.postMessage(response);
-    }
-  } catch (error) {
-    if (nativePort === port) {
-      port.postMessage({
-        type: "response",
-        requestId: message.requestId,
-        ok: false,
-        error: {
-          code: error?.code ?? "extension_error",
-          message: error?.message ?? String(error)
-        }
-      });
-    }
-  }
-}
-
-async function dispatch(method, params) {
+async function dispatch(method, params, context) {
   switch (method) {
     case "browser.list":
-      return readBrowserSummary();
+      return readBrowserSummary(context.connectedAt);
+    case "browser.snapshot":
+      return browserModel.snapshot(await browserInstanceId());
     case "tabs.list":
       return readTabsPage(params);
     default:
       throw Object.assign(new Error(`Unknown browser method: ${method}`), {
-        code: "method_not_found"
+        code: "METHOD_NOT_FOUND",
+        effectorSafe: true
       });
   }
 }
 
-async function readBrowserSummary() {
+async function readBrowserSummary(connectedAt) {
   const [windows, groups, tabs, instanceId] = await Promise.all([
     chrome.windows.getAll({ populate: false }),
     chrome.tabGroups.query({}),
@@ -278,26 +152,9 @@ function normalizeTab(tab) {
   };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "bridge.status") {
-    sendResponse({
-      connected: Boolean(nativePort && brokerReady),
-      connectedAt,
-      lastError,
-      nativeHost: NATIVE_HOST,
-      mcpEndpoint
-    });
-    return false;
-  }
-  if (message?.type === "bridge.reconnect") {
-    reconnectAttempt = 0;
-    connectBroker();
-    sendResponse({ accepted: true });
-    return false;
-  }
-  return false;
+createBackgroundController(chrome, {
+  browserInstanceId,
+  browserModel,
+  dispatch,
+  userAgent: navigator.userAgent
 });
-
-chrome.runtime.onStartup.addListener(connectBroker);
-chrome.runtime.onInstalled.addListener(connectBroker);
-connectBroker();

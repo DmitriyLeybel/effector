@@ -6,8 +6,8 @@ evolve independently.
 
 ## User guides
 
-- [`mcp-tools.md`](mcp-tools.md) — contract summary for the current read-only MCP
-  tools.
+- [`mcp-tools.md`](mcp-tools.md) — authoritative current tool contract and the
+  candidate five-tool version-one surface.
 - [`troubleshooting.md`](troubleshooting.md) — startup order, diagnostics, WSL2
   networking, and common recovery steps.
 
@@ -38,11 +38,28 @@ evolve independently.
   and ACP deferred behind a stable boundary.
 - [`decisions/0004-broker-hosted-streamable-http.md`](decisions/0004-broker-hosted-streamable-http.md)
   — accepted one-process broker with authenticated MCP Streamable HTTP.
+- [`decisions/0005-browser-incarnations-snapshots-and-mutation-plans.md`](decisions/0005-browser-incarnations-snapshots-and-mutation-plans.md)
+  — accepted browser incarnations, broker-owned immutable snapshots, opaque
+  references, and exact non-atomic mutation plans.
+- [`decisions/0006-global-page-capabilities-and-isolated-tools.md`](decisions/0006-global-page-capabilities-and-isolated-tools.md)
+  — accepted global page permissions, DOM-derived tools, active-viewport
+  capture, `inspectAfter`, and isolated user-script evaluation.
+- [`decisions/0007-version-operation-capable-native-protocol.md`](decisions/0007-version-operation-capable-native-protocol.md)
+  — accepted strict protocol v3, implementation negotiation, dispatch state,
+  rich capability facts, and typed PNG artifacts.
 
 ## Planning and research
 
 - [`progress.md`](progress.md) — current implementation state.
 - [`roadmap.md`](roadmap.md) — staged delivery plan.
+- [`mcp-tool-surface-plan.md`](mcp-tool-surface-plan.md) — Part 1 implementation
+  plan and record for protocol v2, browser identity, and `browser.snapshot`.
+- [`mcp-tool-surface-plan-part-2.md`](mcp-tool-surface-plan-part-2.md) —
+  code-grounded continuation for operations, Page tools, dynamic discovery, and
+  final migration.
+- [`mcp-tool-surface-plan-part-3.md`](mcp-tool-surface-plan-part-3.md) —
+  decision-gated workflow-efficiency overlay for destructive clarity, explicit
+  activation recovery, bounded page actions, automatic waits, and token traces.
 - [`research/playwright-mcp-gaps.md`](research/playwright-mcp-gaps.md) — browser
   management capabilities that complement Playwright MCP.
 - [`research/chrome-devtools-and-extension-api-coverage.md`](research/chrome-devtools-and-extension-api-coverage.md)

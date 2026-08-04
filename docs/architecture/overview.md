@@ -1,6 +1,6 @@
 # Architecture overview
 
-Status: implemented read-only topology
+Status: implemented read-only topology; accepted target foundations
 Last updated: 2026-08-03
 
 ## Purpose
@@ -53,6 +53,41 @@ The current implementation uses one Chrome-owned Rust process with
 `native-host`, `install`, and `doctor` modes. ACP remains a later broker module
 and does not participate in the MCP-first runtime.
 
+## Accepted target foundations
+
+[ADR 0005](../decisions/0005-browser-incarnations-snapshots-and-mutation-plans.md)
+and
+[ADR 0006](../decisions/0006-global-page-capabilities-and-isolated-tools.md)
+define the implementation foundations for the proposed five-tool surface. They
+now govern the implemented protocol and browser-snapshot slice. Browser changes
+and page permissions/tools remain unimplemented. The shipped migration surface
+is `browser.snapshot`, `browser.list`, and `tabs.list`.
+
+The target keeps Chrome-owned process lifetime and authenticated loopback MCP,
+but divides new state deliberately:
+
+- The extension owns live Chrome IDs, random object incarnations, exact browser
+  and page dispatch, and persistent global capability toggles.
+- The broker owns complete normalized browser baselines, random typed public
+  references and cursors, immutable snapshots, exact mutation plans, and MCP
+  capability discovery. This retained state is memory-only.
+- Broker snapshot, cursor, plan, and artifact stores use bounded FIFO eviction
+  and fixed creation-time TTLs that are not refreshed by reads. Counts are
+  computed and returned without retention.
+- Snapshot windows are ordered with the focused window first and remaining
+  windows by ascending runtime Chrome window ID; tab-strip order remains Chrome
+  order.
+- The coordinated Native Messaging protocol v3 carries implementation
+  negotiation, complete capability facts, object incarnations, typed errors,
+  dispatch state, request deadlines, and owned PNG artifact envelopes. Current
+  read methods reject artifacts, and mixed protocol peers fail visibly.
+
+Browser changes remain exact, previewed, and non-atomic. The accepted page
+foundation uses one global optional permission grant, DOM-derived isolated-world
+semantics and actions, already-active viewport capture, optional `inspectAfter`,
+and separately enabled isolated `userScripts` evaluation. `debugger`, background
+or full-page capture, and main-world evaluation remain deferred.
+
 ## Components
 
 ### Chrome extension
@@ -65,8 +100,13 @@ The extension owns all current Chrome API calls:
 - `chrome.runtime.connectNative()` for the persistent broker connection.
 - `chrome.storage` for a persistent installation identity.
 
-It does not subscribe to browser events, mutate browser state, implement MCP,
-or listen on a network port.
+It subscribes to window, tab, and Tab Group events and reconciles them with
+complete Chrome queries for `browser.snapshot`. It does not mutate browser
+state, implement MCP, or listen on a network port.
+
+Event-backed incarnation tracking and protocol capability state are implemented.
+Persistent user capability controls and exact mutation/page dispatch remain
+future phases.
 
 ### Native broker host
 
@@ -76,12 +116,17 @@ the extension's native port remains connected. The broker:
 - Translates between extension JSON messages and MCP tool calls.
 - Maintains the connected browser instance and MCP session routing state. A
   multi-instance registry is later work.
-- Owns lightweight routing state and bounded pending queues.
+- Owns bounded pending queues, connected capabilities, random public browser
+  references, and immutable retained browser snapshots/cursors.
 - Exposes authenticated MCP Streamable HTTP on a fixed loopback endpoint.
 - Validates bearer authentication, Host, Origin, protocol, and MCP sessions.
 
 The broker's Native Messaging `stdin/stdout` belongs exclusively to Chrome.
 It must never emit logs or MCP messages on that stdout stream.
+
+Complete browser baselines, public browser references, immutable snapshots, and
+cursors are implemented in broker memory. Mutation plans remain future work.
+Broker restart intentionally invalidates all retained state.
 
 ### MCP Streamable HTTP endpoint
 
@@ -119,9 +164,11 @@ BrowserInstance
     └── ungrouped Tab
 ```
 
-Every response includes a browser-instance ID. Chrome's numeric window, group,
-and tab IDs are valid only within a running browser/profile context and must
-not be treated as durable identifiers across restarts.
+Every current protocol response includes a browser-instance ID. Chrome's numeric
+window, group, and tab IDs are valid only within a running browser/profile
+context and must not be treated as durable identifiers across restarts.
+`browser.snapshot` replaces public numeric IDs with broker-issued typed
+references; migration-only legacy tools still expose runtime IDs.
 
 ## Core request flow
 
@@ -155,10 +202,12 @@ Core inventory initially requires:
 `"tabs"` permission is needed for sensitive fields such as tab URL and title.
 `"sidePanel"` is added only when the side panel exists.
 
-`"scripting"` is not a core permission. It requires host access or
-`"activeTab"` and belongs to a later, explicitly enabled page-content feature.
-`"debugger"` is similarly deferred because it is powerful and unnecessary for
-tab-strip management.
+`"scripting"`, `"webNavigation"`, `"userScripts"`, and host access are not
+current core permissions. The accepted page target requests `"scripting"`,
+`"webNavigation"`, and `<all_urls>` through one disabled-by-default global Page
+tools flow; Advanced evaluation separately requests `"userScripts"` and remains
+version- and setting-gated. `"debugger"` is deferred because it is powerful,
+non-optional, and unnecessary for the accepted V1 page slice.
 
 ## Security boundaries
 
@@ -174,8 +223,9 @@ tab-strip management.
 - Incognito access is denied by the extension manifest.
 - Page content is excluded unless the user grants a separate capability.
 
-Future harness launching, mutations, and page-content capabilities require
-separate security designs. They are not part of the implemented boundary.
+Future harness launching still requires a separate security design. ADRs 0005
+and 0006 accept security boundaries for mutations and page content, but those
+capabilities are not part of the implemented boundary yet.
 
 ## Authoritative references
 
@@ -189,6 +239,5 @@ separate security designs. They are not part of the implemented boundary.
 
 - Fixed-port ownership and routing for multiple simultaneous Chrome profiles.
 - Client-specific provisioning of the HTTP bearer credential.
-- Expansion beyond the initial `browser.list` and `tabs.list` tool surface.
 - Persistence format for workspace metadata.
 - Which ACP agent to use for the first end-to-end integration spike.

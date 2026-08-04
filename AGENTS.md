@@ -13,7 +13,7 @@ Streamable HTTP.
 The implemented scope is intentionally narrow:
 
 - Google Chrome and documented Chrome extension APIs only.
-- Two read-only MCP tools: `browser.list` and `tabs.list`.
+- Three read-only MCP tools: `browser.snapshot`, `browser.list`, and `tabs.list`.
 - Metadata reads that do not activate or wake discarded tabs.
 - One active Chrome profile because the broker uses one fixed loopback port.
 - No mutations, page-content access, CDP, ACP runtime, side-panel conversation
@@ -30,13 +30,21 @@ Do not describe roadmap features as implemented behavior.
 - `native/src/broker.rs`: Native Messaging framing, request correlation, MCP
   HTTP server, authentication, and shutdown.
 - `native/src/mcp.rs`: MCP tool schemas and extension request forwarding.
+- `native/src/protocol.rs`: typed Native Messaging protocol version 3.
+- `native/src/runtime.rs`: process-wide browser identity, capabilities,
+  references, and retained snapshot state.
+- `native/src/browser_snapshot.rs`: immutable browser snapshot contract,
+  filtering, projections, references, retention, and cursors.
 - `native/src/settings.rs`: loopback endpoint, state directory, and token
   creation and validation.
 - `native/src/install.rs`: platform-specific Native Messaging registration.
-- `native/src/doctor.rs`: authenticated health check through `browser.list`.
+- `native/src/doctor.rs`: authenticated health check through
+  `browser.snapshot(detail="counts")`.
 - `extension/manifest.json`: MV3 entry points and permissions.
-- `extension/background.js`: native connection, request dispatch, and Chrome
-  inventory implementation.
+- `extension/background-controller.js`: injectable native connection,
+  capability publication, reconnect, and request orchestration.
+- `extension/background.js`: service-worker composition and Chrome inventory
+  implementation.
 - `extension/popup.js`: direct local inventory UI and broker status.
 - `tests/`: process-level Rust integration tests.
 - `docs/`: architecture, decisions, tool contract, troubleshooting, progress,
@@ -62,6 +70,11 @@ these documents for intent and operator guidance:
    `docs/troubleshooting.md` for installation and recovery.
 6. `docs/progress.md` for what exists now and `docs/roadmap.md` for proposed
    work.
+7. `docs/mcp-tool-surface-plan.md`,
+   `docs/mcp-tool-surface-plan-part-2.md`, and
+   `docs/mcp-tool-surface-plan-part-3.md` for implementation sequencing and
+   workflow-efficiency gates; none overrides shipped source behavior or accepted
+   ADRs.
 
 The stdio-proxy designs in ADRs 0002 and 0003 are superseded by ADR 0004. ACP
 research describes future integration, not the current runtime.
@@ -75,8 +88,8 @@ research describes future integration, not the current runtime.
 3. The broker binds `http://127.0.0.1:37654/mcp` and completes the extension
    handshake.
 4. An MCP client connects with the per-installation bearer token.
-5. MCP tool calls receive a request ID and cross Native Messaging to the
-   extension.
+5. MCP tool calls receive a request ID and cross typed Native Messaging
+   protocol version 3 to the extension.
 6. The extension calls documented Chrome APIs and returns a correlated result.
 7. Native Messaging EOF is the broker's shutdown signal. The HTTP server and
    pending browser requests stop with that Chrome connection.
@@ -94,7 +107,7 @@ call MCP.
 - MCP stays on authenticated loopback Streamable HTTP. Preserve bearer, Host,
   and Origin validation. Never bind to a LAN, WSL gateway, or public address.
 - Preserve native host name `com.effector.browser`, internal protocol version
-  `1`, request IDs, and the `ready`, `ready_ack`, `request`, and `response`
+  `3`, request IDs, and the `ready`, `ready_ack`, `request`, and `response`
   message shapes unless Rust, extension, tests, and docs change together.
 - Respect Native Messaging limits: 1 MiB broker-to-Chrome and 64 MiB
   Chrome-to-broker. Keep inventory bounded and paginated; extension responses
@@ -105,8 +118,11 @@ call MCP.
 - Read tools must not activate, reload, attach to, or wake discarded tabs.
 - `tabs.list` filters before pagination, defaults to 100 results, caps pages at
   250, and returns only windows and groups referenced by the current page.
-- Pagination reads live browser state. Do not imply pages form a frozen snapshot
-  until snapshot revisions exist.
+- `browser.snapshot` uses complete event-reconciled baselines, random public
+  references, bounded FIFO retention, fixed non-refreshing TTLs, and immutable
+  server-side cursors. Counts are not retained.
+- Legacy `tabs.list` pagination reads live browser state and can skip or repeat
+  changing tabs. `browser.snapshot` cursor pages are immutable retained data.
 - Chrome tab, window, and group numeric IDs are runtime-scoped. Retain
   `browserInstanceId`; never treat numeric IDs as durable across restarts.
 - Current tools are read-only. Mutation work requires explicit product scope,
@@ -176,22 +192,26 @@ runtime requirement.
 
 ## Test expectations
 
-- `tests/broker_roundtrip.rs` covers handshake, protocol mismatch, partial frame
-  rejection, token creation, endpoint advertisement, and shutdown after
-  simulated Native Messaging EOF.
+- `tests/broker_roundtrip.rs` covers the protocol-v3 handshake, mismatch,
+  response identity, partial frame rejection, token creation, endpoint
+  advertisement, and shutdown after simulated Native Messaging EOF.
 - `tests/mcp_tools.rs` covers unauthorized HTTP rejection, MCP discovery, tool
   names, Host and Origin rejection, and listener shutdown.
 - `tests/full_mcp_roundtrip.rs` covers MCP-to-Native-Messaging routing and the
-  structured result path.
+  structured result path. `tests/browser_snapshot.rs` covers counts, compact and
+  full projection, stable references, immutable cursors, typed errors,
+  capabilities, and model revisions. `tests/doctor.rs` covers counts-only
+  diagnostics.
 - New broker tests must use an ephemeral loopback port and isolated
   `EFFECTOR_STATE_DIR` or `EFFECTOR_MCP_TOKEN` values. Never touch the
   developer's real token, Chrome registration, registry, or config directory.
 - Protocol and extension changes need process-level tests and, when Chrome API
   behavior matters, manual live-Chrome validation.
 
-Known automated gaps include `tabs.list` filtering and pagination, `doctor`,
-extension JavaScript behavior, reconnection, multiple-profile conflict
-behavior, and platform registration.
+Known automated gaps include `tabs.list` filtering and pagination, background
+connection/reconnection behavior, multiple-profile conflict behavior, and
+platform registration. Dependency-free extension model/protocol tests exist but
+require Node in the development or CI environment.
 
 ## Stateful and live validation
 
@@ -211,8 +231,8 @@ For a requested live validation:
 5. Run the matching operating system's `effector doctor` while Chrome remains
    open.
 6. Start or restart the MCP client after the broker is connected.
-7. Validate `browser.list`, then filters and pagination in `tabs.list`. Confirm
-   discarded tabs remain discarded.
+7. Validate `browser.snapshot`, including immutable pagination, then the legacy
+   tools during migration. Confirm discarded tabs remain discarded.
 
 For Windows Chrome, install and run `doctor` with Windows `effector.exe` in
 PowerShell. A Linux executable in WSL uses different registration and state.
@@ -261,8 +281,8 @@ cross-building.
 - Clients must reconnect and initialize after broker restart.
 - `tabs.list` returns page-local window and group context, not a frozen snapshot
   or complete hierarchy. Offset pagination can skip or repeat changing tabs.
-- Field selection, snapshot revisions, event aggregation, and mutations do not
-  exist.
+- Field selection and mutations do not exist. Snapshot model revisions and
+  event-triggered authoritative browser reconciliation are implemented.
 - ACP, side panel, harness supervision, page content, CDP, production packaging,
   and a stable production extension ID do not exist.
 - macOS registration and cross-platform restart behavior remain unvalidated.

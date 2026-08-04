@@ -6,19 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rmcp::{
-    ServiceExt,
-    model::{CallToolRequestParams, ClientInfo},
-    transport::{
-        StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
-    },
-};
 use serde_json::{Value, json};
 
-const TOKEN: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+const TOKEN: &str = "23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01";
 
-#[tokio::test(flavor = "multi_thread")]
-async fn http_mcp_tool_call_reaches_the_extension_boundary_and_returns() {
+#[test]
+fn doctor_uses_privacy_safe_snapshot_counts_and_prints_only_health() {
     let address = reserve_address();
     let mut broker = Command::new(env!("CARGO_BIN_EXE_effector"))
         .arg("native-host")
@@ -31,10 +24,8 @@ async fn http_mcp_tool_call_reaches_the_extension_boundary_and_returns() {
         .unwrap();
     wait_for_port(address);
 
-    let mut native_stdin = broker.stdin.take().unwrap();
-    let mut native_stdout = broker.stdout.take().unwrap();
     write_native_frame(
-        &mut native_stdin,
+        broker.stdin.as_mut().unwrap(),
         &json!({
             "type":"ready",
             "protocolVersion":3,
@@ -44,7 +35,7 @@ async fn http_mcp_tool_call_reaches_the_extension_boundary_and_returns() {
                 {"method":"browser.snapshot","abiRevision":1},
                 {"method":"tabs.list","abiRevision":1}
             ],
-            "browserInstanceId":"live-browser-test",
+            "browserInstanceId":"doctor-browser",
             "extensionId":"extension-test",
             "extensionVersion":"1.0.0",
             "userAgent":"Chrome test",
@@ -54,58 +45,62 @@ async fn http_mcp_tool_call_reaches_the_extension_boundary_and_returns() {
                 "browserChange":capability(false),
                 "pageTools":capability(false),
                 "advancedEvaluation":capability(false),
-                "frozenTabs":true,
+                "frozenTabs":false,
                 "sharedTabGroups":false
             }
         }),
     );
-    let ready_ack = read_native_frame(&mut native_stdout);
-    assert_eq!(ready_ack["type"], "ready_ack");
+    let _ = read_native_frame(broker.stdout.as_mut().unwrap());
 
-    let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(format!("http://{address}/mcp"))
-            .auth_header(TOKEN),
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effector"))
+        .arg("doctor")
+        .env("EFFECTOR_MCP_ADDRESS", address.to_string())
+        .env("EFFECTOR_MCP_TOKEN", TOKEN)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let request = read_native_frame(broker.stdout.as_mut().unwrap());
+    assert_eq!(request["method"], "browser.snapshot");
+    assert_eq!(request["params"], json!({}));
+    write_native_frame(
+        broker.stdin.as_mut().unwrap(),
+        &json!({
+            "type":"response",
+            "browserInstanceId":"doctor-browser",
+            "requestId":request["requestId"],
+            "ok":true,
+            "dispatch":{"state":"completed"},
+            "result":{
+                "browserInstanceId":"doctor-browser",
+                "modelRevision":1,
+                "capturedAt":"2026-08-03T12:00:00Z",
+                "supportsFrozenTabs":false,
+                "supportsSharedTabGroups":false,
+                "windows":[{"key":"window-key","id":1,"focused":true}],
+                "groups":[],
+                "tabs":[{
+                    "key":"tab-key","id":2,"windowKey":"window-key","index":0,
+                    "title":"private title","url":"https://private.test/","active":true,
+                    "highlighted":true,"pinned":false,"discarded":false
+                }]
+            }
+        }),
     );
-    let client = ClientInfo::default().serve(transport).await.unwrap();
-    let peer = client.peer().clone();
-    let pending_call = tokio::spawn(async move {
-        peer.call_tool(CallToolRequestParams::new("browser.list"))
-            .await
-    });
 
-    let exchange = tokio::task::spawn_blocking(move || {
-        let request = read_native_frame(&mut native_stdout);
-        assert_eq!(request["method"], "browser.list");
-        assert_eq!(request["requestClass"], "read");
-        let deadline_ms = request["deadlineMs"].as_u64().unwrap();
-        assert!((1..=29_000).contains(&deadline_ms));
-        write_native_frame(
-            &mut native_stdin,
-            &json!({
-                "type":"response",
-                "browserInstanceId":"live-browser-test",
-                "requestId":request["requestId"],
-                "ok":true,
-                "dispatch":{"state":"completed"},
-                "result":{
-                    "browserInstanceId":"live-browser-test",
-                    "summary":{"windowCount":2,"groupCount":3,"tabCount":12}
-                }
-            }),
-        );
-        (native_stdin, native_stdout)
-    });
-
-    let result = pending_call.await.unwrap().unwrap();
-    let (native_stdin, native_stdout) = exchange.await.unwrap();
-    broker.stdin = Some(native_stdin);
-    broker.stdout = Some(native_stdout);
+    let output = doctor.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(
-        result.structured_content.unwrap()["browserInstanceId"],
-        "live-browser-test"
+        String::from_utf8_lossy(&output.stdout),
+        "Effector MCP broker and Chrome extension are reachable.\n"
     );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("private"));
 
-    client.cancel().await.unwrap();
     drop(broker.stdin.take());
     let status = broker.wait().unwrap();
     assert!(status.success(), "broker exited with {status}");
@@ -133,10 +128,7 @@ fn wait_for_port(address: SocketAddr) {
     while TcpStream::connect(address).is_err() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(20));
     }
-    assert!(
-        TcpStream::connect(address).is_ok(),
-        "MCP endpoint did not bind"
-    );
+    assert!(TcpStream::connect(address).is_ok());
 }
 
 fn read_native_frame(input: &mut impl Read) -> Value {

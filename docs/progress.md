@@ -45,6 +45,30 @@ Last updated: 2026-08-03
       dependency-update files.
 - [x] Disabled incognito access, enforced both sides of the native handshake,
       bounded response bytes, and normalized public window and group fields.
+- [x] Specified a simplified, token-conscious five-tool MCP surface and
+      comprehensive phased implementation plan without describing future
+      capabilities as implemented.
+- [x] Accepted ADRs 0005 and 0006 for the target browser identity, snapshot,
+      mutation-plan, global page-permission, and isolated page-tool foundations.
+- [x] Upgraded the extension/broker boundary to strict protocol version 2 with
+      browser identity, capability revisions, typed errors, bounded requests,
+      and visible mixed-version failure.
+- [x] Added an event-reconciled extension browser model with random object
+      incarnations and implemented `browser.snapshot` counts, compact/full
+      projections, opaque references, filters, and immutable cursor pages.
+- [x] Moved `effector doctor` to privacy-safe snapshot counts and added Rust
+      process tests plus dependency-free extension protocol/model tests.
+- [x] Drafted the Part 2 execution plan from Part 1 implementation learnings,
+      including foundation closure, protocol evolution, browser changes, Page
+      tools, validation, and legacy removal milestones.
+- [x] Accepted ADR 0007 and upgraded the matched extension/broker boundary to
+      strict protocol v3 with exact ABI and implementation negotiation, rich
+      capability facts, typed dispatch state, and a bounded PNG artifact shape.
+- [x] Extracted the production background controller behind dependency injection
+      and added ready, reconnect, stale-port, duplicate-request, and status tests.
+- [x] Drafted the Part 3 workflow-efficiency overlay, preserving the five-tool
+      surface while gating destructive clarity, activation recovery, bounded
+      page-action sequences, automatic waits, and token trajectories on evidence.
 
 ## Current state
 
@@ -61,6 +85,13 @@ Last updated: 2026-08-03
 - MCP clients now connect to `http://127.0.0.1:37654/mcp` with the persistent
   bearer credential printed by `effector install`.
 - No ACP client, agent supervisor, or side-panel conversation UI exists.
+- `browser.snapshot` is implemented alongside migration-only `browser.list` and
+  `tabs.list`. Browser changes and all page tools remain unimplemented.
+- Protocol v3 and snapshot behavior pass automated Rust tests. The
+  dependency-free extension suite includes model, protocol-v3, and background
+  controller tests; the new JavaScript tests still need to run in an environment
+  with Node. Live Chrome validation is still required across supported platforms
+  and restart paths.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 
@@ -70,9 +101,9 @@ Last updated: 2026-08-03
 - Validate the native registration path on macOS.
 - Validate fixed-port and bearer-header support in additional MCP clients.
 - Add automated integration coverage for `tabs.list` filtering and pagination.
-- Add automated coverage for `doctor`.
-- Add automated extension coverage for filtering, pagination, handshake,
-  reconnect, and response-size behavior.
+- Run the expanded dependency-free extension suite with Node.
+- Live-validate `browser.snapshot` ordering, immutable pagination, unsupported
+  fields, and no-disturbance guarantees with real Chrome.
 
 ## Working rule
 

@@ -23,8 +23,8 @@ page contents, cookies, form data, passwords, downloads, or browsing history.
 ## How data is used
 
 The extension uses this metadata to display a local inventory and to answer the
-read-only `browser.list` and `tabs.list` tools requested by an MCP client that
-the user configured with Effector's bearer token.
+read-only `browser.snapshot`, `browser.list`, and `tabs.list` tools requested by
+an MCP client that the user configured with Effector's bearer token.
 
 Effector does not send inventory or credentials to an Effector-operated server,
 sell data, use data for advertising, or use data to train models. A configured
@@ -34,8 +34,10 @@ MCP client may process tool results under that client's own privacy terms.
 
 The extension stores a random installation identifier in Chrome extension
 storage. The native application stores a random MCP bearer token in the user's
-Effector configuration directory. Browser inventory is read live and is not
-persisted by the broker.
+Effector configuration directory. `browser.snapshot` retains bounded browser
+baselines, opaque references, and cursor state in broker memory for up to two
+minutes; reads do not extend that lifetime. This inventory is never persisted
+and is discarded on eviction, broker shutdown, or Chrome disconnection.
 
 The popup can copy or download an inventory report only after an explicit user
 action. Those reports contain sensitive browser metadata and remain wherever

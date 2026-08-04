@@ -25,4 +25,9 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release
       - name: Check extension syntax
-        run: node --check extension/background.js && node --check extension/popup.js
+        run: |
+          for file in extension/*.js extension/tests/*.mjs; do
+            node --check "$file"
+          done
+      - name: Run extension tests
+        run: node --test extension/tests/*.test.mjs

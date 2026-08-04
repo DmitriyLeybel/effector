@@ -56,7 +56,20 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
     let tools = client.list_tools(None).await.unwrap();
     let names: Vec<&str> = tools.tools.iter().map(|tool| tool.name.as_ref()).collect();
     assert!(names.contains(&"browser.list"));
+    assert!(names.contains(&"browser.snapshot"));
     assert!(names.contains(&"tabs.list"));
+    let snapshot = tools
+        .tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "browser.snapshot")
+        .unwrap();
+    assert!(snapshot.output_schema.is_some());
+    let input_schema = serde_json::to_string(&snapshot.input_schema).unwrap();
+    assert!(input_schema.contains("additionalProperties\":false"));
+    assert!(!input_schema.contains("\"null\""));
+    let output_schema = serde_json::to_string(snapshot.output_schema.as_ref().unwrap()).unwrap();
+    assert!(output_schema.contains("browserSnapshotRef"));
+    assert!(output_schema.contains("additionalProperties\":false"));
     client.cancel().await.unwrap();
 
     drop(child.stdin.take());

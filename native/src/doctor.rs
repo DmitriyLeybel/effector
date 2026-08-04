@@ -6,6 +6,7 @@ use rmcp::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
+use serde_json::{Map, Value};
 
 use crate::settings;
 
@@ -20,17 +21,19 @@ pub async fn run() -> Result<()> {
         .await
         .context("connect to Effector MCP endpoint; start Chrome with the extension installed")?;
     let result = client
-        .call_tool(CallToolRequestParams::new("browser.list"))
+        .call_tool(
+            CallToolRequestParams::new("browser.snapshot").with_arguments(Map::from_iter([(
+                "detail".to_owned(),
+                Value::String("counts".to_owned()),
+            )])),
+        )
         .await
-        .context("call browser.list")?;
+        .context("call browser.snapshot")?;
     let _ = client.cancel().await;
 
     if result.is_error == Some(true) {
         bail!("Effector MCP is reachable, but the Chrome request failed");
     }
     println!("Effector MCP broker and Chrome extension are reachable.");
-    if let Some(value) = result.structured_content {
-        println!("{}", serde_json::to_string_pretty(&value)?);
-    }
     Ok(())
 }

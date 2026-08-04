@@ -32,7 +32,7 @@ stdin/stdout pipes.
 | `effector` with Chrome's extension-origin argument | Chrome | Native Messaging broker and MCP HTTP server |
 | `effector native-host` | Developer/test tooling | Explicit broker mode |
 | `effector install --extension-id ...` | User or installer | Register the current binary and create MCP credentials |
-| `effector doctor` | User/support tooling | Connect over MCP HTTP and call `browser.list` |
+| `effector doctor` | User/support tooling | Connect over MCP HTTP and call `browser.snapshot(detail="counts")` |
 
 There is no harness-launched `effector mcp` process.
 

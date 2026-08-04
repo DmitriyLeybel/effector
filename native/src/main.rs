@@ -1,7 +1,10 @@
 mod broker;
+mod browser_snapshot;
 mod doctor;
 mod install;
 mod mcp;
+mod protocol;
+mod runtime;
 mod settings;
 
 use anyhow::Result;
