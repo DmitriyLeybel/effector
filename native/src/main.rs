@@ -1,5 +1,6 @@
 mod broker;
 mod browser_snapshot;
+mod capabilities;
 mod doctor;
 mod install;
 mod mcp;

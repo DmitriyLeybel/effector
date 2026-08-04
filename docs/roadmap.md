@@ -32,6 +32,10 @@
 - [ ] Multiple Chrome-profile routing.
 - [x] Implement the proposed `browser.snapshot` contract with opaque references
       and immutable pagination.
+- [x] Add empty pre-handshake MCP discovery and broker-wide tool-list-change
+      fan-out without exposing unfinished tools.
+- [x] Add persisted capability reconciliation and an unavailable-by-default
+      Browser changes popup control without exposing mutation methods.
 
 ## Phase 3: controlled mutations
 

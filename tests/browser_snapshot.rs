@@ -221,14 +221,12 @@ async fn snapshot_counts_compact_cursor_and_typed_errors_round_trip() {
         }),
     );
     tokio::time::sleep(Duration::from_millis(30)).await;
-    let unavailable = client
-        .call_tool(tool_call(json!({"detail":"counts"})))
-        .await
-        .unwrap();
-    assert_eq!(unavailable.is_error, Some(true));
-    assert_eq!(
-        unavailable.structured_content.unwrap()["code"],
-        "CAPABILITY_UNAVAILABLE"
+    assert!(
+        client
+            .call_tool(tool_call(json!({"detail":"counts"})))
+            .await
+            .is_err(),
+        "a stale capability revision must not restore direct-call admission"
     );
 
     client.cancel().await.unwrap();

@@ -38,6 +38,14 @@ open, where it is organized, and which browser instance it belongs to.
 
 `browser.list` and `tabs.list` remain temporarily for migration. Results are
 bounded and paginated, making them practical for large real-world sessions.
+Tool discovery is empty until the Chrome extension handshake completes. Clients
+that consume MCP tool-list notifications refresh automatically; other clients
+must reconnect after broker or future capability changes.
+
+The popup includes the global Browser changes control foundation. It is visibly
+unavailable in the current read-only build and cannot enable mutations. Browser
+changes, future Page tools, and future Advanced evaluation settings are all
+initialized disabled in extension storage.
 
 ## Quick Start
 
@@ -93,6 +101,8 @@ authenticated connection to the MCP client you choose.
   token.
 - Chrome permissions are limited to tab metadata, tab groups, local storage,
   and Native Messaging.
+- Capability authority can be changed only through extension UI, never through
+  MCP. Any future enabled authority is shared by every authenticated MCP client.
 
 See [Privacy](PRIVACY.md) and [Security](SECURITY.md) for the complete model.
 

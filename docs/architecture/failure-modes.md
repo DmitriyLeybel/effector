@@ -1,7 +1,7 @@
 # Failure modes and recovery
 
 Status: implemented failures; accepted target foundations
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 | Failure | Observable result | Required recovery |
 | --- | --- | --- |
@@ -14,6 +14,8 @@ Last updated: 2026-08-03
 | WSL2 uses NAT while the broker runs on Windows | WSL cannot reach the Windows loopback endpoint | Enable WSL mirrored networking, run `wsl --shutdown`, then restart WSL and the harness |
 | Bearer token is stale or incorrect | MCP returns an unauthorized response | Replace the client header with the installation token and restart the client |
 | Harness exits | Its MCP session closes or expires | The broker remains available to other clients while Chrome stays connected |
+| MCP initializes before the extension handshake | Tool discovery is temporarily empty and direct calls fail closed | Consume the tool-list-change notification or reconnect after the popup reports the broker connected |
+| Capability storage or reconciliation is unavailable | The control reports a bounded error and the extension does not publish a new authority state | Reload the extension after Chrome storage recovers; capabilities fail closed rather than using a guessed state |
 | Native message exceeds its transport limit | The message is rejected or the native connection closes | Keep requests bounded; `tabs.list` currently caps each page at 250 tabs |
 | Multiple Chrome profiles connect | Only one broker can own the fixed endpoint | The additional broker fails visibly; close the other profile before retrying |
 | MCP port is already owned | Another profile or process owns the fixed endpoint | Fail visibly; do not attach to or terminate an unknown process |

@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 ## Completed
 
@@ -96,6 +96,16 @@ Last updated: 2026-08-03
       cap, exactly-once keyed admission, multi-waiter completion, owner-aware
       eviction, dispatch-aware shutdown outcomes, and admission-ordered overlap
       lanes. No side-effecting method is reachable yet.
+- [x] Added the native P2.2 dynamic-discovery foundation: empty pre-ready lists,
+      immutable implementation/capability snapshots, per-call implementation
+      admission, fixed safe capability errors, and bounded coalescing tool-list
+      notifications for two legacy sessions and modern MCP subscriptions. The
+      visible surface remains the same three read tools.
+- [x] Added the extension P2.2 capability controller and Browser changes popup
+      foundation. All three desired settings are persisted disabled when absent,
+      complete immutable capability facts reconcile storage, permissions,
+      runtime support, probes, parent dependencies, and browser-model support,
+      and Browser changes remains visibly unavailable while apply is absent.
 
 ## Current state
 
@@ -118,18 +128,21 @@ Last updated: 2026-08-03
   250-millisecond best-effort automatic DOM quiet for their future owning
   branches. None is currently advertised.
 - Protocol v3 and snapshot behavior pass automated Rust tests. The
-  dependency-free extension suite includes model, protocol-v3, and background
-  controller tests; the new JavaScript tests still need to run in an environment
-  with Node. Live Chrome validation is still required across supported platforms
-  and restart paths.
+  dependency-free extension suite includes model, protocol-v3, background
+  controller, and capability-controller tests; the JavaScript tests still need
+  to run in an environment with Node. Live Chrome validation is still required
+  across supported platforms and restart paths.
 - P2.0 snapshot boundary work now freezes the current MCP discovery schema and a
   normalized full snapshot result and covers retained cursor lifecycle failures.
   Generalized retention, exact aggregate quota policy, and internal snapshot
   lookup are implemented. The read transport now has explicit lifecycle and
   flushed-dispatch accounting. Broker-owned task ownership and overlap lanes are
   implemented but remain disconnected from public tools until retained plans and
-  operation dispatch land. Dynamic registry work, remaining race coverage,
-  client spikes, and live evidence are still open.
+  operation dispatch land. P2.2 dynamic discovery, multi-session list-change
+  fan-out, persisted extension capability reconciliation, and the unavailable
+  Browser changes control are implemented without adding a mutation method or
+  Page permission. Optional branches arrive only with their owning tool phases;
+  Node execution, named-client spikes, and live evidence are still open.
 - ADR 0004 records the accepted HTTP transport. Cross-platform restart and
   multiple-profile behavior still need validation.
 

@@ -319,7 +319,6 @@ async fn native_reader(
                     bail!("Chrome extension sent a duplicate ready message");
                 }
                 let implementations = negotiate_implementations(&message.implementations)?;
-                runtime.connect(message, implementations.clone());
                 let acknowledgement = ReadyAck {
                     message_type: "ready_ack",
                     protocol_version: INTERNAL_PROTOCOL_VERSION,
@@ -336,6 +335,7 @@ async fn native_reader(
                     .await
                     .context("queue ready acknowledgement")?;
                 ready.store(true, Ordering::Release);
+                runtime.connect(message, implementations);
             }
             IncomingMessage::CapabilitiesChanged(message) => {
                 runtime

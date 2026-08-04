@@ -1,9 +1,22 @@
 import browserModel from "./browser-model.js";
 import { createBackgroundController } from "./background-controller.js";
+import { createCapabilityController } from "./capabilities.js";
 
 const MAX_PAGE_SIZE = 250;
 const runtimeEpoch = crypto.randomUUID();
 const installationIdPromise = loadInstallationId();
+const capabilityController = createCapabilityController({
+  storage: chrome.storage.local,
+  storageChanged: chrome.storage.onChanged,
+  permissions: chrome.permissions,
+  browserSupport: browserModel,
+  implementations: {
+    browserSnapshot: true,
+    browserChange: false,
+    pageTools: false,
+    advancedEvaluation: false
+  }
+});
 
 async function loadInstallationId() {
   const stored = await chrome.storage.local.get(["installationId", "browserInstanceId"]);
@@ -154,7 +167,7 @@ function normalizeTab(tab) {
 
 createBackgroundController(chrome, {
   browserInstanceId,
-  browserModel,
+  capabilityController,
   dispatch,
   userAgent: navigator.userAgent
 });

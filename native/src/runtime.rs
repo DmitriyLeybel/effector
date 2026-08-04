@@ -1,11 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, Weak},
     time::{Duration, Instant},
 };
 
 use crate::{
     browser_snapshot::{Baseline, StoredSnapshot},
+    capabilities::{CapabilityKind, DiscoverySnapshot, ToolListNotifier},
     operation_tasks::OperationTasks,
     protocol::{
         Capabilities, CapabilitiesChangedMessage, DomainError, ImplementationEntry, ReadyMessage,
@@ -30,6 +31,7 @@ pub(crate) struct BrokerRuntime {
     inner: Arc<Mutex<RuntimeState>>,
     clock: Arc<dyn Clock>,
     operations: OperationTasks,
+    tool_list_notifiers: Arc<Mutex<Vec<Weak<ToolListNotifier>>>>,
 }
 
 pub(crate) struct RuntimeState {
@@ -38,6 +40,7 @@ pub(crate) struct RuntimeState {
     pub(crate) retention: RuntimeRetention,
     pub(crate) latest_model_revision: Option<u64>,
     pub(crate) latest_model_fingerprint: Option<Vec<u8>>,
+    discovery: Arc<DiscoverySnapshot>,
 }
 
 #[derive(Clone)]
@@ -96,9 +99,11 @@ impl BrokerRuntime {
                 retention: RuntimeRetention::new(),
                 latest_model_revision: None,
                 latest_model_fingerprint: None,
+                discovery: Arc::new(DiscoverySnapshot::default()),
             })),
             clock,
             operations: OperationTasks::new(),
+            tool_list_notifiers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -107,9 +112,7 @@ impl BrokerRuntime {
     }
 
     pub(crate) fn connect(&self, ready: ReadyMessage, implementations: Vec<ImplementationEntry>) {
-        let mut state = self.state();
-        state.clear_retained();
-        state.connected = Some(ConnectedBrowser {
+        let connected = ConnectedBrowser {
             browser_instance_id: ready.browser_instance_id,
             _extension_id: ready.extension_id,
             _extension_version: ready.extension_version,
@@ -117,27 +120,46 @@ impl BrokerRuntime {
             capability_revision: ready.capability_revision,
             capabilities: ready.capabilities,
             implementations,
-        });
+        };
+        {
+            let mut state = self.state();
+            state.clear_retained();
+            state.discovery = Arc::new(DiscoverySnapshot::connected(
+                connected.capability_revision,
+                &connected.capabilities,
+                &connected.implementations,
+            ));
+            state.connected = Some(connected);
+        }
+        self.notify_tool_list_changed();
     }
 
     pub(crate) fn apply_capabilities(
         &self,
         changed: CapabilitiesChangedMessage,
     ) -> Result<bool, String> {
-        let mut state = self.state();
-        let Some(connected) = state.connected.as_mut() else {
-            return Err("capabilities_changed arrived before ready".to_owned());
-        };
-        if connected.browser_instance_id != changed.browser_instance_id {
-            return Err("capabilities_changed browser identity did not match ready".to_owned());
+        {
+            let mut state = self.state();
+            let Some(connected) = state.connected.as_mut() else {
+                return Err("capabilities_changed arrived before ready".to_owned());
+            };
+            if connected.browser_instance_id != changed.browser_instance_id {
+                return Err("capabilities_changed browser identity did not match ready".to_owned());
+            }
+            if changed.capability_revision <= connected.capability_revision {
+                return Ok(false);
+            }
+            validate_capability_implementations(&changed.capabilities, &connected.implementations)
+                .map_err(|error| error.to_string())?;
+            connected.capability_revision = changed.capability_revision;
+            connected.capabilities = changed.capabilities;
+            state.discovery = Arc::new(DiscoverySnapshot::connected(
+                connected.capability_revision,
+                &connected.capabilities,
+                &connected.implementations,
+            ));
         }
-        if changed.capability_revision <= connected.capability_revision {
-            return Ok(false);
-        }
-        validate_capability_implementations(&changed.capabilities, &connected.implementations)
-            .map_err(|error| error.to_string())?;
-        connected.capability_revision = changed.capability_revision;
-        connected.capabilities = changed.capabilities;
+        self.notify_tool_list_changed();
         Ok(true)
     }
 
@@ -145,6 +167,7 @@ impl BrokerRuntime {
         self.operations.shutdown_and_clear();
         let mut state = self.state();
         state.connected = None;
+        state.discovery = Arc::new(DiscoverySnapshot::default());
         state.clear_retained();
     }
 
@@ -155,6 +178,53 @@ impl BrokerRuntime {
             .map(|connected| connected.browser_instance_id.clone())
     }
 
+    pub(crate) fn discovery_snapshot(&self) -> Arc<DiscoverySnapshot> {
+        self.state().discovery.clone()
+    }
+
+    pub(crate) fn register_tool_list_notifier(&self, notifier: &Arc<ToolListNotifier>) {
+        {
+            let mut notifiers = self
+                .tool_list_notifiers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            notifiers.retain(|registered| registered.strong_count() > 0);
+            if !notifiers
+                .iter()
+                .any(|registered| registered.ptr_eq(&Arc::downgrade(notifier)))
+            {
+                notifiers.push(Arc::downgrade(notifier));
+            }
+        }
+        // Insertion precedes this read: either a concurrent publication sees
+        // the notifier, or registration replays the already-ready state.
+        if self.discovery_snapshot().is_ready() {
+            notifier.notify();
+        }
+    }
+
+    fn notify_tool_list_changed(&self) {
+        let notifiers = {
+            let mut registered = self
+                .tool_list_notifiers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut notifiers = Vec::with_capacity(registered.len());
+            registered.retain(|notifier| {
+                if let Some(notifier) = notifier.upgrade() {
+                    notifiers.push(notifier);
+                    true
+                } else {
+                    false
+                }
+            });
+            notifiers
+        };
+        for notifier in notifiers {
+            notifier.notify();
+        }
+    }
+
     pub(crate) fn require_snapshot_capability(&self) -> Result<ConnectedBrowser, DomainError> {
         let state = self.state();
         let connected = state.connected.clone().ok_or_else(|| {
@@ -163,12 +233,9 @@ impl BrokerRuntime {
                 "The Chrome extension handshake is not complete.",
             )
         })?;
-        if !connected.capabilities.browser_snapshot.effective {
-            return Err(DomainError::new(
-                "CAPABILITY_UNAVAILABLE",
-                "Browser snapshots are not supported by the connected extension.",
-            ));
-        }
+        state
+            .discovery
+            .require_capability(CapabilityKind::BrowserSnapshot)?;
         Ok(connected)
     }
 

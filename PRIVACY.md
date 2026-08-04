@@ -32,12 +32,15 @@ MCP client may process tool results under that client's own privacy terms.
 
 ## Storage and retention
 
-The extension stores a random installation identifier in Chrome extension
-storage. The native application stores a random MCP bearer token in the user's
-Effector configuration directory. `browser.snapshot` retains bounded browser
-baselines, opaque references, and cursor state in broker memory for up to two
-minutes; reads do not extend that lifetime. This inventory is never persisted
-and is discarded on eviction, broker shutdown, or Chrome disconnection.
+The extension stores a random installation identifier and three global desired
+capability settings in Chrome extension storage. Browser changes, Page tools,
+and Advanced evaluation settings default to disabled; the current read-only build
+does not allow Browser changes to be enabled and does not display Page controls.
+The native application stores a random MCP bearer token in the user's Effector
+configuration directory. `browser.snapshot` retains bounded browser baselines,
+opaque references, and cursor state in broker memory for up to two minutes;
+reads do not extend that lifetime. This inventory is never persisted and is
+discarded on eviction, broker shutdown, or Chrome disconnection.
 
 The popup can copy or download an inventory report only after an explicit user
 action. Those reports contain sensitive browser metadata and remain wherever
@@ -47,8 +50,11 @@ the user places them.
 
 Users can stop access by disabling or removing the extension, closing Chrome,
 or removing the Native Messaging registration. Removing extension storage
-deletes the installation identifier. Removing the Effector state directory
-deletes the MCP token.
+deletes the installation identifier and capability settings. Removing the
+Effector state directory deletes the MCP token. When future capabilities are
+available, any authority enabled in extension UI applies to every MCP client
+that possesses the installation bearer token; version one has no per-client
+authorization layer.
 
 ## Reporting concerns
 

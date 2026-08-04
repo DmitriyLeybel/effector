@@ -5,8 +5,23 @@ const statusElement = document.querySelector("#status");
 const summaryElement = document.querySelector("#summary");
 const outputElement = document.querySelector("#output");
 const bridgeStatusElement = document.querySelector("#bridge-status");
+const browserChangesCard = document.querySelector("#browser-changes-card");
+const browserChangesToggle = document.querySelector("#browser-changes-toggle");
+const browserChangesControlLabel = document.querySelector("#browser-changes-control-label");
+const browserChangesStatus = document.querySelector("#browser-changes-status");
 
 let latestReport = null;
+let latestCapabilityState = null;
+let capabilityRequestGeneration = 0;
+
+const CAPABILITY_REASON_TEXT = Object.freeze({
+  disabled: "Disabled by you.",
+  permissionMissing: "A required Chrome permission is missing.",
+  unsupported: "This Chrome version does not support Browser changes.",
+  probeFailed: "Browser changes failed an availability check.",
+  notImplemented: "Unavailable in this build. No browser mutation can be dispatched.",
+  dependencyUnavailable: "A required capability is unavailable."
+});
 
 async function refreshBridgeStatus() {
   try {
@@ -18,6 +33,82 @@ async function refreshBridgeStatus() {
   } catch (error) {
     bridgeStatusElement.classList.add("error");
     bridgeStatusElement.textContent = `Bridge status failed: ${error?.message ?? String(error)}`;
+  }
+}
+
+function renderBrowserChanges(state, errorMessage = null, pending = false) {
+  latestCapabilityState = state ?? latestCapabilityState;
+  const capability = latestCapabilityState?.capabilities?.browserChange;
+
+  browserChangesCard.classList.toggle("error", Boolean(errorMessage));
+  browserChangesCard.classList.toggle("enabled", capability?.effective === true);
+  browserChangesCard.classList.toggle("unavailable", capability?.implemented !== true);
+  browserChangesToggle.checked = capability?.desired === true;
+  browserChangesToggle.disabled = pending || capability?.implemented !== true;
+
+  if (pending) {
+    browserChangesControlLabel.textContent = "Updating...";
+    browserChangesStatus.textContent = "Saving the global Browser changes setting...";
+    return;
+  }
+  if (errorMessage) {
+    browserChangesControlLabel.textContent = "Unavailable";
+    browserChangesStatus.textContent = errorMessage;
+    return;
+  }
+  if (!capability) {
+    browserChangesControlLabel.textContent = "Unavailable";
+    browserChangesStatus.textContent = "Capability state is temporarily unavailable.";
+    return;
+  }
+
+  browserChangesControlLabel.textContent = capability.effective
+    ? "Enabled"
+    : capability.desired ? "Requested" : "Disabled";
+  browserChangesStatus.textContent = capability.effective
+    ? "Enabled globally for every authenticated MCP client."
+    : CAPABILITY_REASON_TEXT[capability.reason] ?? "Browser changes are unavailable.";
+}
+
+async function refreshCapabilities() {
+  const generation = ++capabilityRequestGeneration;
+  renderBrowserChanges(latestCapabilityState, null, true);
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "capabilities.get" });
+    if (generation !== capabilityRequestGeneration) return;
+    if (!response?.ok) {
+      renderBrowserChanges(null, response?.error?.message ??
+        "Capability state is temporarily unavailable.");
+      return;
+    }
+    renderBrowserChanges(response.state);
+  } catch (_error) {
+    if (generation === capabilityRequestGeneration) {
+      renderBrowserChanges(null, "Capability state is temporarily unavailable.");
+    }
+  }
+}
+
+async function updateBrowserChanges() {
+  const enabled = browserChangesToggle.checked;
+  const generation = ++capabilityRequestGeneration;
+  renderBrowserChanges(latestCapabilityState, null, true);
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "capabilities.setBrowserChanges",
+      enabled
+    });
+    if (generation !== capabilityRequestGeneration) return;
+    if (!response?.ok) {
+      renderBrowserChanges(response?.state, response?.error?.message ??
+        "Browser changes could not be updated.");
+      return;
+    }
+    renderBrowserChanges(response.state);
+  } catch (_error) {
+    if (generation === capabilityRequestGeneration) {
+      renderBrowserChanges(latestCapabilityState, "Browser changes could not be updated.");
+    }
   }
 }
 
@@ -221,4 +312,5 @@ function downloadReport() {
 runButton.addEventListener("click", readInventory);
 copyButton.addEventListener("click", copyReport);
 downloadButton.addEventListener("click", downloadReport);
-void refreshBridgeStatus();
+browserChangesToggle.addEventListener("change", updateBrowserChanges);
+void Promise.all([refreshBridgeStatus(), refreshCapabilities()]);

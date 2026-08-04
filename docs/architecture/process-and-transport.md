@@ -107,6 +107,26 @@ eviction and fixed creation-time TTLs. The extension persists global toggle
 choices; broker references, baselines, snapshots, cursors, plans, artifacts,
 and deduplication results do not survive broker restart.
 
+## Dynamic MCP discovery
+
+The broker listens for MCP connections before the extension handshake may be
+complete, but returns an empty `tools/list` until an accepted protocol v3
+`ready`. After the `ready_ack` is queued, the broker atomically installs one
+immutable discovery snapshot derived from the negotiated implementation keys and
+complete capability facts. Every list and direct call reads a current snapshot;
+discovery is not authorization for extension dispatch.
+
+Accepted capability revisions replace the broker-wide snapshot before a bounded,
+coalescing tool-list-change signal is sent to each eligible session. Legacy
+initialized sessions and modern `subscriptions/listen` clients are supported.
+Clients that do not consume list changes must reconnect to rediscover. The
+current negotiated surface remains the three read tools. The extension persists
+all three desired capability settings disabled when absent and reconciles them
+with build support, permissions, runtime support, safe probes, and parent
+dependencies. Only the Browser changes control is displayed; it is unavailable
+while apply support is absent. Page controls and optional tool branches are not
+implemented yet.
+
 ## Accepted page flow
 
 This is also target behavior, not a currently available page-tool surface.

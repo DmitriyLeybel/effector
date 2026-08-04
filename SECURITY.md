@@ -31,6 +31,9 @@ Effector's current security boundary depends on all of the following:
   identity and strictly validates capability, request, and response envelopes.
 - New browser snapshots expose random process-local references rather than
   Chrome numeric IDs and retain bounded state only in broker memory.
+- Global capability settings can be changed only through extension UI. Any
+  future capability enabled there is shared by every client holding the
+  installation bearer token; there is no per-client authority layer.
 - Incognito access, page content, arbitrary Chrome API forwarding, and shell
   execution are not available.
 

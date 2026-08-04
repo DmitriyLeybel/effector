@@ -1,7 +1,7 @@
 # Architecture overview
 
 Status: implemented read-only topology; accepted target foundations
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 ## Purpose
 
@@ -103,14 +103,17 @@ The extension owns all current Chrome API calls:
 - `chrome.tabs` for tab metadata.
 - `chrome.tabGroups` for standard Chrome group metadata.
 - `chrome.runtime.connectNative()` for the persistent broker connection.
-- `chrome.storage` for a persistent installation identity.
+- `chrome.storage` for a persistent installation identity and global desired
+  capability settings.
 
 It subscribes to window, tab, and Tab Group events and reconciles them with
 complete Chrome queries for `browser.snapshot`. It does not mutate browser
 state, implement MCP, or listen on a network port.
 
-Event-backed incarnation tracking and protocol capability state are implemented.
-Persistent user capability controls and exact mutation/page dispatch remain
+Event-backed incarnation tracking and complete capability reconciliation are
+implemented. The popup displays the global Browser changes control, but the
+current build marks it unavailable and rejects enablement because no apply
+implementation exists. Page controls and exact mutation/page dispatch remain
 future phases.
 
 ### Native broker host
@@ -122,7 +125,8 @@ the extension's native port remains connected. The broker:
 - Maintains the connected browser instance and MCP session routing state. A
   multi-instance registry is later work.
 - Owns bounded pending queues, connected capabilities, random public browser
-  references, and immutable retained browser snapshots/cursors.
+  references, immutable retained browser snapshots/cursors, and one live MCP
+  discovery snapshot shared by all sessions.
 - Exposes authenticated MCP Streamable HTTP on a fixed loopback endpoint.
 - Validates bearer authentication, Host, Origin, protocol, and MCP sessions.
 
@@ -138,8 +142,9 @@ Broker restart intentionally invalidates all retained state.
 The broker serves `http://127.0.0.1:37654/mcp` by default. The installer creates
 a persistent random bearer token and prints the client configuration. Multiple
 clients receive independent MCP sessions while sharing one Chrome connection.
-Simple tool operations return JSON HTTP responses; the SDK retains SSE support
-for future server notifications.
+Simple tool operations return JSON HTTP responses. Tool-list changes fan out to
+legacy initialized sessions and modern MCP subscription streams; clients without
+refresh support observe current discovery after reconnecting.
 
 ### Future side panel and ACP
 

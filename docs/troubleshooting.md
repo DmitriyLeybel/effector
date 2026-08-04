@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Status: current
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 ## Healthy startup order
 
@@ -65,11 +65,21 @@ Do not paste the real token into issues, logs, screenshots, or repository files.
 
 ## MCP connects but tools are absent
 
-Restart the MCP client after Chrome and the broker are connected. Clients that
-perform MCP discovery only during startup must also be restarted after changes
-to MCP configuration, the token, WSL networking, or the Effector installation.
-Verify that the server entry uses Streamable HTTP,
+Before the Chrome extension handshake completes, Effector intentionally returns
+an empty tool list. Clients that consume tool-list-change notifications should
+refresh after the popup reports **Native broker connected**. Clients that only
+perform discovery during startup must be restarted after Chrome connects or
+after changes to MCP configuration, the token, WSL networking, or the Effector
+installation. Verify that the server entry uses Streamable HTTP,
 `http://127.0.0.1:37654/mcp`, and the bearer header shown in the README.
+
+## Browser changes reports unavailable
+
+This is expected in the current read-only build. The popup contains the global
+Browser changes control foundation, but keeps it disabled until matching apply
+support exists in both the extension and broker. Reloading Chrome, changing MCP
+configuration, or reconnecting a client cannot enable an unimplemented method.
+No Page tools or Advanced evaluation controls are present yet.
 
 ## Windows Chrome and WSL2 cannot connect
 

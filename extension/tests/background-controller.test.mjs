@@ -45,8 +45,10 @@ function createHarness(overrides = {}) {
   const nativeHosts = [];
   const timers = new Map();
   const dispatchCalls = [];
+  const setDesiredCalls = [];
   let nextTimerId = 1;
-  let supportListener = null;
+  let capabilityListener = null;
+  let currentCapabilityState = overrides.capabilityState ?? state();
 
   const runtime = {
     id: "extension-id",
@@ -63,16 +65,20 @@ function createHarness(overrides = {}) {
     }
   };
   const chromeApi = { runtime };
-  const browserModel = {
-    getSupport: overrides.getSupport ?? (async () => ({
-      frozenTabs: false,
-      sharedTabGroups: false
-    })),
-    onSupportChanged(listener) {
-      supportListener = listener;
+  const capabilityController = overrides.capabilityController ?? {
+    getState: overrides.getCapabilityState ?? (async () => currentCapabilityState),
+    onChanged(listener) {
+      capabilityListener = listener;
       return () => {
-        supportListener = null;
+        capabilityListener = null;
       };
+    },
+    async setDesired(name, desired) {
+      setDesiredCalls.push({ name, desired });
+      return currentCapabilityState;
+    },
+    async whenIdle() {
+      if (overrides.whenCapabilitiesIdle) await overrides.whenCapabilitiesIdle();
     }
   };
   const dispatch = overrides.dispatch ?? (async (method, params, context) => {
@@ -82,7 +88,7 @@ function createHarness(overrides = {}) {
 
   createBackgroundController(chromeApi, {
     browserInstanceId: overrides.browserInstanceId ?? (async () => "browser-1"),
-    browserModel,
+    capabilityController,
     dispatch,
     userAgent: "test-agent",
     now: () => "2026-08-03T12:00:00.000Z",
@@ -102,10 +108,12 @@ function createHarness(overrides = {}) {
     dispatchCalls,
     nativeHosts,
     ports,
+    setDesiredCalls,
     timers,
-    emitSupport(support) {
-      assert.ok(supportListener, "support listener was registered");
-      supportListener(support);
+    emitCapabilities(nextState) {
+      currentCapabilityState = nextState;
+      assert.ok(capabilityListener, "capability listener was registered");
+      capabilityListener(nextState);
     },
     runTimerWithDelay(delay) {
       const entry = [...timers.entries()].find(([, timer]) => timer.delay === delay);
@@ -165,6 +173,13 @@ function sendRuntimeMessage(harness, message) {
   return response;
 }
 
+function sendAsyncRuntimeMessage(harness, message) {
+  return new Promise((resolve) => {
+    const returns = harness.chromeApi.runtime.onMessage.emit(message, {}, resolve);
+    assert.deepEqual(returns, [true]);
+  });
+}
+
 test("registers listeners synchronously and orders ready before capability publication", async () => {
   const harness = createHarness();
   const port = harness.ports[0];
@@ -201,7 +216,7 @@ test("registers listeners synchronously and orders ready before capability publi
     }
   });
 
-  harness.emitSupport({ frozenTabs: true, sharedTabGroups: false });
+  harness.emitCapabilities(state(2, { frozenTabs: true }));
   await Promise.resolve();
   await Promise.resolve();
   assert.equal(port.messages.length, 1, "capabilities published before ready acknowledgement");
@@ -381,6 +396,134 @@ test("reports status and accepts an explicit reconnect", async () => {
   assert.equal(sendRuntimeMessage(harness, { type: "unknown" }), undefined);
 });
 
+test("coalesces rapid capability revisions after the handshake", async () => {
+  const harness = createHarness();
+  const port = harness.ports[0];
+  await waitFor(() => port.messages.length === 1);
+  port.onMessage.emit(readyAck());
+
+  harness.emitCapabilities(state(2, { frozenTabs: true }));
+  harness.emitCapabilities(state(3, {
+    frozenTabs: true,
+    sharedTabGroups: true
+  }));
+
+  await waitFor(() => port.messages.length === 2);
+  assert.equal(port.messages[1].type, "capabilities_changed");
+  assert.equal(port.messages[1].capabilityRevision, 3);
+  assert.equal(port.messages[1].capabilities.frozenTabs, true);
+  assert.equal(port.messages[1].capabilities.sharedTabGroups, true);
+});
+
+test("publishes a capability change before a dependent browser result", async () => {
+  let emitCapabilities;
+  const harness = createHarness({
+    dispatch: async () => {
+      emitCapabilities(state(2, { frozenTabs: true }));
+      return { captured: true };
+    }
+  });
+  emitCapabilities = harness.emitCapabilities;
+  const port = harness.ports[0];
+  await waitFor(() => port.messages.length === 1);
+  port.onMessage.emit(readyAck());
+
+  port.onMessage.emit(request());
+  await waitFor(() => port.messages.length === 3);
+
+  assert.equal(port.messages[1].type, "capabilities_changed");
+  assert.equal(port.messages[1].capabilityRevision, 2);
+  assert.equal(port.messages[2].type, "response");
+  assert.equal(port.messages[2].requestId, "request-1");
+});
+
+test("waits for capability reconciliation before a dependent browser result", async () => {
+  const reconciliation = deferred();
+  const harness = createHarness({
+    whenCapabilitiesIdle: () => reconciliation.promise
+  });
+  const port = harness.ports[0];
+  await waitFor(() => port.messages.length === 1);
+  port.onMessage.emit(readyAck());
+
+  port.onMessage.emit(request());
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(port.messages.length, 1, "result bypassed capability reconciliation");
+
+  harness.emitCapabilities(state(2, { frozenTabs: true }));
+  reconciliation.resolve();
+  await waitFor(() => port.messages.length === 3);
+  assert.equal(port.messages[1].type, "capabilities_changed");
+  assert.equal(port.messages[2].type, "response");
+});
+
+test("serves popup capability state and rejects unavailable enablement", async () => {
+  const harness = createHarness();
+  const expected = state();
+
+  assert.deepEqual(
+    await sendAsyncRuntimeMessage(harness, { type: "capabilities.get" }),
+    { ok: true, state: expected }
+  );
+  assert.deepEqual(
+    await sendAsyncRuntimeMessage(harness, {
+      type: "capabilities.setBrowserChanges",
+      enabled: true
+    }),
+    {
+      ok: false,
+      state: expected,
+      error: {
+        code: "CAPABILITY_UNAVAILABLE",
+        message: "Browser changes are unavailable in this build."
+      }
+    }
+  );
+  assert.deepEqual(harness.setDesiredCalls, []);
+  assert.deepEqual(sendRuntimeMessage(harness, {
+    type: "capabilities.setBrowserChanges",
+    enabled: "yes"
+  }), {
+    ok: false,
+    error: {
+      code: "INVALID_CAPABILITY_SETTING",
+      message: "Browser changes must be enabled or disabled explicitly."
+    }
+  });
+});
+
+test("routes an available Browser changes setting through the controller", async () => {
+  const disabled = status({ implemented: true, desired: false });
+  const enabled = status({ implemented: true, desired: true });
+  const before = state(4, { browserChange: disabled });
+  const after = state(5, { browserChange: enabled });
+  const calls = [];
+  const capabilityController = {
+    async getState() {
+      return before;
+    },
+    onChanged() {
+      return () => {};
+    },
+    async whenIdle() {},
+    async setDesired(name, desired) {
+      calls.push({ name, desired });
+      return after;
+    }
+  };
+  const harness = createHarness({ capabilityController });
+
+  assert.deepEqual(
+    await sendAsyncRuntimeMessage(harness, {
+      type: "capabilities.setBrowserChanges",
+      enabled: true
+    }),
+    { ok: true, state: after }
+  );
+  assert.deepEqual(calls, [{ name: "browserChange", desired: true }]);
+});
+
 function capability(effective) {
   return {
     implemented: effective,
@@ -390,5 +533,47 @@ function capability(effective) {
     probePassed: effective,
     effective,
     reason: effective ? "available" : "notImplemented"
+  };
+}
+
+function status({
+  implemented = true,
+  desired = true,
+  granted = true,
+  supported = true,
+  probePassed = true,
+  dependencyAvailable = true
+} = {}) {
+  const effective = implemented && desired && granted && supported && probePassed &&
+    dependencyAvailable;
+  let reason = "available";
+  if (!implemented) reason = "notImplemented";
+  else if (!desired) reason = "disabled";
+  else if (!granted) reason = "permissionMissing";
+  else if (!supported) reason = "unsupported";
+  else if (!probePassed) reason = "probeFailed";
+  else if (!dependencyAvailable) reason = "dependencyUnavailable";
+  return {
+    implemented,
+    desired,
+    granted,
+    supported,
+    probePassed,
+    effective,
+    reason
+  };
+}
+
+function state(revision = 1, overrides = {}) {
+  return {
+    revision,
+    capabilities: {
+      browserSnapshot: capability(true),
+      browserChange: overrides.browserChange ?? capability(false),
+      pageTools: capability(false),
+      advancedEvaluation: capability(false),
+      frozenTabs: overrides.frozenTabs ?? false,
+      sharedTabGroups: overrides.sharedTabGroups ?? false
+    }
   };
 }

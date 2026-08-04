@@ -8,20 +8,26 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Output, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use rmcp::{
-    RoleClient, ServiceExt,
-    model::ClientInfo,
-    service::RunningService,
+    ClientHandler, ClientLifecycleMode, ClientServiceExt, RoleClient, ServiceExt,
+    model::{ClientInfo, ProtocolVersion},
+    service::{NotificationContext, RunningService},
     transport::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+use tokio::sync::Notify;
 
 pub const DEFAULT_BROWSER_ID: &str = "browser-test";
 
@@ -35,6 +41,38 @@ pub struct TestBroker {
 pub struct TestChild {
     child: Option<Child>,
     state_dir: PathBuf,
+}
+
+#[derive(Clone, Default)]
+pub struct ToolListObserver {
+    count: Arc<AtomicUsize>,
+    changed: Arc<Notify>,
+}
+
+impl ToolListObserver {
+    pub fn count(&self) -> usize {
+        self.count.load(Ordering::SeqCst)
+    }
+
+    pub async fn wait_for_count(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if self.count() >= expected {
+                    return;
+                }
+                self.changed.notified().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for tools/list_changed");
+    }
+}
+
+impl ClientHandler for ToolListObserver {
+    async fn on_tool_list_changed(&self, _context: NotificationContext<RoleClient>) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        self.changed.notify_one();
+    }
 }
 
 impl TestBroker {
@@ -167,6 +205,37 @@ pub async fn connect_mcp(
             .auth_header(token),
     );
     ClientInfo::default().serve(transport).await.unwrap()
+}
+
+pub async fn connect_mcp_observer(
+    address: SocketAddr,
+    token: &str,
+    observer: ToolListObserver,
+) -> RunningService<RoleClient, ToolListObserver> {
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(format!("http://{address}/mcp"))
+            .auth_header(token),
+    );
+    observer.serve(transport).await.unwrap()
+}
+
+pub async fn connect_mcp_subscription(
+    address: SocketAddr,
+    token: &str,
+) -> RunningService<RoleClient, ClientInfo> {
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(format!("http://{address}/mcp"))
+            .auth_header(token),
+    );
+    ClientInfo::default()
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .unwrap()
 }
 
 pub fn ready(

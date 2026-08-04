@@ -11,7 +11,7 @@
 }
 
 body {
-  width: 680px;
+  width: min(680px, 100vw);
   min-height: 540px;
   margin: 0;
   background:
@@ -39,6 +39,11 @@ h1 {
   margin: 0;
   font-size: 24px;
   line-height: 1.2;
+}
+
+h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
 }
 
 .intro {
@@ -96,6 +101,124 @@ button:disabled {
   color: #ff9c9c;
 }
 
+.capability-card {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #3b4251;
+  border-radius: 10px;
+  background: rgb(27 31 39 / 88%);
+}
+
+.capability-card.unavailable {
+  border-color: #625946;
+  background: rgb(55 47 33 / 42%);
+}
+
+.capability-card.enabled {
+  border-color: #4d806b;
+  background: rgb(30 67 52 / 42%);
+}
+
+.capability-card.error {
+  border-color: #8d4e54;
+}
+
+.capability-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.section-label {
+  margin: 0;
+  color: #d1b675;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #c8ced9;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.switch:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border: 1px solid #687080;
+  border-radius: 999px;
+  background: #252a35;
+}
+
+.switch-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #aeb5c4;
+  content: "";
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.switch input:checked + .switch-track {
+  border-color: #68a68c;
+  background: #315f4c;
+}
+
+.switch input:checked + .switch-track::after {
+  background: #e8fff5;
+  transform: translateX(15px);
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid #b9a8ff;
+  outline-offset: 2px;
+}
+
+.capability-status,
+.capability-note {
+  margin: 9px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.capability-status {
+  color: #dfc98f;
+  font-weight: 650;
+}
+
+.capability-card.enabled .capability-status {
+  color: #93dbbd;
+}
+
+.capability-card.error .capability-status {
+  color: #ff9c9c;
+}
+
+.capability-note {
+  color: #9fa7b6;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -139,4 +262,24 @@ pre {
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
   white-space: pre;
+}
+
+@media (max-width: 520px) {
+  main {
+    padding: 16px;
+  }
+
+  .capability-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .controls {
+    flex-wrap: wrap;
+  }
+
+  .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

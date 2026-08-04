@@ -381,11 +381,13 @@ fn validate_capabilities(capabilities: &Capabilities) -> Result<()> {
         ) {
             bail!("capability {name} has an invalid safe reason");
         }
-        let effective = status.implemented
+        let base_effective = status.implemented
             && status.desired
             && status.granted
             && status.supported
             && status.probe_passed;
+        let effective =
+            base_effective && (name != "advancedEvaluation" || capabilities.page_tools.effective);
         if status.effective != effective {
             bail!("capability {name} has inconsistent effective state");
         }
@@ -407,9 +409,8 @@ pub(crate) fn validate_capability_implementations(
     if capabilities.browser_change.effective && !has_method("browser.change") {
         bail!("browserChange is effective without a browser.change implementation");
     }
-    if capabilities.page_tools.effective && (!has_method("page.inspect") || !has_method("page.act"))
-    {
-        bail!("pageTools is effective without page.inspect and page.act implementations");
+    if capabilities.page_tools.effective && !has_method("page.inspect") && !has_method("page.act") {
+        bail!("pageTools is effective without an implemented Page tool");
     }
     if capabilities.advanced_evaluation.effective
         && (!capabilities.page_tools.effective || !has_method("page.evaluate"))
@@ -645,6 +646,72 @@ mod tests {
 
         remote[0].abi_revision = 2;
         assert!(negotiate_implementations(&remote).is_err());
+    }
+
+    #[test]
+    fn advanced_evaluation_can_report_an_unavailable_parent_dependency() {
+        let capabilities: super::Capabilities = serde_json::from_value(json!({
+            "browserSnapshot": capability(false),
+            "browserChange": capability(false),
+            "pageTools": capability(false),
+            "advancedEvaluation": {
+                "implemented": true,
+                "desired": true,
+                "granted": true,
+                "supported": true,
+                "probePassed": true,
+                "effective": false,
+                "reason": "dependencyUnavailable"
+            },
+            "frozenTabs": true,
+            "sharedTabGroups": false
+        }))
+        .unwrap();
+
+        super::validate_capabilities(&capabilities).unwrap();
+    }
+
+    #[test]
+    fn capability_reason_can_safely_describe_any_unavailable_fact() {
+        let capabilities: super::Capabilities = serde_json::from_value(json!({
+            "browserSnapshot": capability(false),
+            "browserChange": {
+                "implemented": true,
+                "desired": false,
+                "granted": false,
+                "supported": false,
+                "probePassed": false,
+                "effective": false,
+                "reason": "unsupported"
+            },
+            "pageTools": capability(false),
+            "advancedEvaluation": capability(false),
+            "frozenTabs": true,
+            "sharedTabGroups": false
+        }))
+        .unwrap();
+
+        super::validate_capabilities(&capabilities).unwrap();
+    }
+
+    #[test]
+    fn effective_page_capability_accepts_independently_implemented_methods() {
+        let capabilities: super::Capabilities = serde_json::from_value(json!({
+            "browserSnapshot": capability(false),
+            "browserChange": capability(false),
+            "pageTools": capability(true),
+            "advancedEvaluation": capability(false),
+            "frozenTabs": true,
+            "sharedTabGroups": false
+        }))
+        .unwrap();
+        let implementations = [super::ImplementationEntry {
+            method: "page.inspect".to_owned(),
+            branch: Some("semantic".to_owned()),
+            abi_revision: 1,
+        }];
+
+        super::validate_capability_implementations(&capabilities, &implementations).unwrap();
     }
 
     #[test]

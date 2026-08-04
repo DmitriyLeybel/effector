@@ -1,11 +1,20 @@
 # MCP tool reference
 
 Status: `browser.snapshot` and legacy tools implemented; remaining V1 proposed
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 Effector currently implements `browser.snapshot` alongside the migration-only
 `browser.list` and `tabs.list` tools. The remaining four tools in the five-tool
 replacement are proposed and are not implemented yet.
+
+Before the Chrome extension `ready` handshake is accepted, `tools/list` returns
+no browser tools and direct calls fail closed. After the handshake, discovery is
+derived from one broker-wide implementation and capability snapshot. The broker
+advertises tool-list-change support through both initialized MCP sessions and
+the modern subscription lifecycle. The currently implemented list remains
+exactly `browser.snapshot`, `browser.list`, and `tabs.list`; no unfinished tool is
+exposed. The extension popup shows Browser changes as unavailable in this build,
+so its persisted disabled setting cannot enable or advertise mutation behavior.
 
 Implementation sequencing is tracked in
 [`mcp-tool-surface-plan.md`](mcp-tool-surface-plan.md) and the code-grounded

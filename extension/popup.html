@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Effector Chrome Inventory</title>
+    <title>Effector</title>
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
@@ -20,6 +20,28 @@
       </header>
 
       <p id="bridge-status" class="status" role="status">Checking native broker...</p>
+
+      <section id="browser-changes-card" class="capability-card unavailable" aria-labelledby="browser-changes-title">
+        <div class="capability-heading">
+          <div>
+            <p class="section-label">GLOBAL AUTHORITY</p>
+            <h2 id="browser-changes-title">Browser changes</h2>
+          </div>
+          <label class="switch">
+            <input id="browser-changes-toggle" type="checkbox" role="switch" disabled>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span id="browser-changes-control-label">Unavailable</span>
+          </label>
+        </div>
+        <p id="browser-changes-status" class="capability-status" role="status">
+          Checking capability state...
+        </p>
+        <p class="capability-note">
+          When available and enabled, this grants every authenticated MCP client
+          permission to change Chrome tabs, windows, and Tab Groups. It is not a
+          per-client permission.
+        </p>
+      </section>
 
       <section class="controls" aria-label="Inventory controls">
         <button id="run" class="primary" type="button">Read Chrome state</button>

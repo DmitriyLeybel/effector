@@ -15,7 +15,7 @@ const NATIVE_HOST = "com.effector.browser";
 export function createBackgroundController(chromeApi, dependencies) {
   const {
     browserInstanceId,
-    browserModel,
+    capabilityController,
     dispatch,
     userAgent = globalThis.navigator?.userAgent ?? "",
     now = () => new Date().toISOString(),
@@ -32,73 +32,15 @@ export function createBackgroundController(chromeApi, dependencies) {
   let lastError = null;
   let connectedAt = null;
   let mcpEndpoint = null;
-  let capabilityRevision = 1;
-  let capabilities = null;
-  let pendingSupport = null;
   let readyCapabilityRevision = 0;
-  let capabilitiesReady = null;
+  let lastPublishedCapabilityRevision = 0;
+  let pendingCapabilityState = null;
+  let capabilityPublicationScheduled = false;
   let capabilityPublication = Promise.resolve();
 
-  browserModel.onSupportChanged((support) => {
-    if (!capabilities) {
-      pendingSupport = support;
-      return;
-    }
-    const nextCapabilities = buildCapabilities(support);
-    if (JSON.stringify(capabilities) === JSON.stringify(nextCapabilities)) return;
-    capabilities = nextCapabilities;
-    capabilityRevision += 1;
-    capabilityPublication = capabilityPublication
-      .catch(() => {})
-      .then(publishCapabilitiesChanged);
+  capabilityController.onChanged((state) => {
+    queueCapabilityPublication(state);
   });
-
-  function buildCapabilities(support) {
-    return {
-      browserSnapshot: capabilityStatus(true, "available"),
-      browserChange: capabilityStatus(false, "notImplemented"),
-      pageTools: capabilityStatus(false, "notImplemented"),
-      advancedEvaluation: capabilityStatus(false, "notImplemented"),
-      frozenTabs: support.frozenTabs,
-      sharedTabGroups: support.sharedTabGroups
-    };
-  }
-
-  function capabilityStatus(effective, reason) {
-    return {
-      implemented: effective,
-      desired: effective,
-      granted: effective,
-      supported: effective,
-      probePassed: effective,
-      effective,
-      reason
-    };
-  }
-
-  async function initializeCapabilities() {
-    const support = await browserModel.getSupport();
-    capabilities = buildCapabilities(pendingSupport ?? support);
-    pendingSupport = null;
-  }
-
-  function ensureCapabilitiesReady() {
-    if (!capabilitiesReady) {
-      capabilitiesReady = initializeCapabilities().catch((error) => {
-        capabilitiesReady = null;
-        throw error;
-      });
-    }
-    return capabilitiesReady;
-  }
-
-  async function capabilityState() {
-    await ensureCapabilitiesReady();
-    return {
-      revision: capabilityRevision,
-      capabilities: { ...capabilities }
-    };
-  }
 
   function connectBroker() {
     if (nativePort) return;
@@ -111,6 +53,7 @@ export function createBackgroundController(chromeApi, dependencies) {
       negotiatedImplementations = null;
       inFlightRequestIds = new Set();
       readyCapabilityRevision = 0;
+      lastPublishedCapabilityRevision = 0;
       lastError = null;
       connectedAt = now();
 
@@ -162,7 +105,7 @@ export function createBackgroundController(chromeApi, dependencies) {
   async function sendReady(port) {
     const [instanceId, state] = await Promise.all([
       browserInstanceId(),
-      capabilityState()
+      capabilityController.getState()
     ]);
     const message = {
       type: "ready",
@@ -178,6 +121,8 @@ export function createBackgroundController(chromeApi, dependencies) {
     };
     if (nativePort === port) {
       readyCapabilityRevision = state.revision;
+      lastPublishedCapabilityRevision = state.revision;
+      if (pendingCapabilityState?.revision <= state.revision) pendingCapabilityState = null;
       port.postMessage(message);
     }
   }
@@ -197,9 +142,9 @@ export function createBackgroundController(chromeApi, dependencies) {
       brokerReady = true;
       negotiatedImplementations = validation.value.implementations;
       mcpEndpoint = message.mcpEndpoint;
-      if (readyCapabilityRevision !== capabilityRevision) {
-        void publishCapabilitiesChanged();
-      }
+      void capabilityController.getState().then((state) => {
+        if (state.revision > readyCapabilityRevision) queueCapabilityPublication(state);
+      }).catch(() => {});
       return;
     }
 
@@ -255,8 +200,25 @@ export function createBackgroundController(chromeApi, dependencies) {
 
   async function dispatchRequest(method, params) {
     const result = await dispatch(method, params, { connectedAt });
-    if (method === "browser.snapshot") await capabilityPublication;
+    if (method === "browser.snapshot") await synchronizeCapabilityPublication();
     return result;
+  }
+
+  async function synchronizeCapabilityPublication() {
+    await capabilityController.whenIdle();
+    const state = await capabilityController.getState();
+    queueCapabilityPublication(state);
+    while (brokerReady && state.revision > lastPublishedCapabilityRevision) {
+      const publication = capabilityPublication;
+      await publication;
+      if (
+        publication === capabilityPublication &&
+        !capabilityPublicationScheduled &&
+        state.revision > lastPublishedCapabilityRevision
+      ) {
+        queueCapabilityPublication(state);
+      }
+    }
   }
 
   async function sendError(port, requestId, error, dispatchState = "completed") {
@@ -282,20 +244,45 @@ export function createBackgroundController(chromeApi, dependencies) {
     return Promise.race([operation, deadline]).finally(() => cancelTimeout(timer));
   }
 
+  function queueCapabilityPublication(state) {
+    if (!pendingCapabilityState || state.revision > pendingCapabilityState.revision) {
+      pendingCapabilityState = state;
+    }
+    if (!brokerReady || capabilityPublicationScheduled) return;
+
+    capabilityPublicationScheduled = true;
+    capabilityPublication = capabilityPublication
+      .catch(() => {})
+      .then(publishCapabilitiesChanged)
+      .finally(() => {
+        capabilityPublicationScheduled = false;
+        if (brokerReady && pendingCapabilityState) {
+          queueCapabilityPublication(pendingCapabilityState);
+        }
+      });
+  }
+
   async function publishCapabilitiesChanged() {
-    const port = nativePort;
-    if (!port || !brokerReady) return;
-    const [instanceId, state] = await Promise.all([
-      browserInstanceId(),
-      capabilityState()
-    ]);
-    if (nativePort !== port || !brokerReady) return;
-    port.postMessage({
-      type: "capabilities_changed",
-      browserInstanceId: instanceId,
-      capabilityRevision: state.revision,
-      capabilities: state.capabilities
-    });
+    while (pendingCapabilityState) {
+      const state = pendingCapabilityState;
+      pendingCapabilityState = null;
+      if (state.revision <= lastPublishedCapabilityRevision) continue;
+
+      const port = nativePort;
+      if (!port || !brokerReady) {
+        pendingCapabilityState = state;
+        return;
+      }
+      const instanceId = await browserInstanceId();
+      if (nativePort !== port || !brokerReady) return;
+      port.postMessage({
+        type: "capabilities_changed",
+        browserInstanceId: instanceId,
+        capabilityRevision: state.revision,
+        capabilities: state.capabilities
+      });
+      lastPublishedCapabilityRevision = state.revision;
+    }
   }
 
   chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -315,8 +302,62 @@ export function createBackgroundController(chromeApi, dependencies) {
       sendResponse({ accepted: true });
       return false;
     }
+    if (message?.type === "capabilities.get") {
+      void capabilityController.getState()
+        .then((state) => sendResponse({ ok: true, state }))
+        .catch(() => sendResponse({
+          ok: false,
+          error: {
+            code: "CAPABILITY_STATE_UNAVAILABLE",
+            message: "Capability state is temporarily unavailable."
+          }
+        }));
+      return true;
+    }
+    if (message?.type === "capabilities.setBrowserChanges") {
+      if (typeof message.enabled !== "boolean") {
+        sendResponse({
+          ok: false,
+          error: {
+            code: "INVALID_CAPABILITY_SETTING",
+            message: "Browser changes must be enabled or disabled explicitly."
+          }
+        });
+        return false;
+      }
+      void setBrowserChanges(message.enabled).then(sendResponse);
+      return true;
+    }
     return false;
   });
+
+  async function setBrowserChanges(enabled) {
+    try {
+      const current = await capabilityController.getState();
+      if (enabled && !current.capabilities.browserChange.implemented) {
+        return {
+          ok: false,
+          state: current,
+          error: {
+            code: "CAPABILITY_UNAVAILABLE",
+            message: "Browser changes are unavailable in this build."
+          }
+        };
+      }
+      return {
+        ok: true,
+        state: await capabilityController.setDesired("browserChange", enabled)
+      };
+    } catch (_error) {
+      return {
+        ok: false,
+        error: {
+          code: "CAPABILITY_UPDATE_FAILED",
+          message: "Browser changes could not be updated."
+        }
+      };
+    }
+  }
 
   chromeApi.runtime.onStartup.addListener(connectBroker);
   chromeApi.runtime.onInstalled.addListener(connectBroker);

@@ -5,9 +5,14 @@ use std::{
     net::{SocketAddr, TcpStream},
 };
 
+use rmcp::model::{CallToolRequestParams, ServerNotification, SubscriptionFilter};
 use serde_json::Value;
+use serde_json::json;
 
-use support::{TestBroker, assert_json_golden, connect_mcp};
+use support::{
+    DEFAULT_BROWSER_ID, TestBroker, ToolListObserver, assert_json_golden, capabilities,
+    connect_mcp_observer, connect_mcp_subscription, ready,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_chrome() {
@@ -41,8 +46,51 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
         "{invalid_origin}"
     );
 
-    let client = connect_mcp(address, &token).await;
-    let tools = client.list_tools(None).await.unwrap();
+    let first_observer = ToolListObserver::default();
+    let second_observer = ToolListObserver::default();
+    let first_client = connect_mcp_observer(address, &token, first_observer.clone()).await;
+    let second_client = connect_mcp_observer(address, &token, second_observer.clone()).await;
+    let server_info = first_client.peer_info().unwrap();
+    assert_eq!(
+        server_info
+            .capabilities
+            .tools
+            .as_ref()
+            .and_then(|tools| tools.list_changed),
+        Some(true)
+    );
+
+    assert!(
+        first_client
+            .list_tools(None)
+            .await
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+    assert!(
+        second_client
+            .list_tools(None)
+            .await
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+    assert!(
+        first_client
+            .call_tool(CallToolRequestParams::new("browser.list"))
+            .await
+            .is_err(),
+        "a direct pre-ready call must not bypass discovery admission"
+    );
+
+    broker.write(&ready(DEFAULT_BROWSER_ID, 1, true, true, true));
+    let acknowledgement = broker.read();
+    assert_eq!(acknowledgement["type"], "ready_ack");
+    first_observer.wait_for_count(1).await;
+    second_observer.wait_for_count(1).await;
+
+    let tools = first_client.list_tools(None).await.unwrap();
     let mut golden_tools: Vec<Value> = tools
         .tools
         .iter()
@@ -96,10 +144,110 @@ async fn authenticated_http_mcp_server_advertises_browser_tools_and_stops_with_c
             assert!(!is_required(definition, field));
         }
     }
-    client.cancel().await.unwrap();
+    let second_tools = second_client.list_tools(None).await.unwrap();
+    assert_eq!(
+        tool_names(&tools.tools),
+        tool_names(&second_tools.tools),
+        "all sessions must read the same process-wide discovery snapshot"
+    );
+
+    broker.write(&json!({
+        "type":"capabilities_changed",
+        "browserInstanceId":DEFAULT_BROWSER_ID,
+        "capabilityRevision":2,
+        "capabilities":capabilities(false, true, true)
+    }));
+    first_observer.wait_for_count(2).await;
+    second_observer.wait_for_count(2).await;
+    assert!(
+        first_client
+            .list_tools(None)
+            .await
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+    assert!(
+        first_client
+            .call_tool(CallToolRequestParams::new("browser.snapshot"))
+            .await
+            .is_err(),
+        "a direct call must fail after its capability becomes ineffective"
+    );
+
+    let reconnect_observer = ToolListObserver::default();
+    let reconnect_client = connect_mcp_observer(address, &token, reconnect_observer.clone()).await;
+    reconnect_observer.wait_for_count(1).await;
+    assert!(
+        reconnect_client
+            .list_tools(None)
+            .await
+            .unwrap()
+            .tools
+            .is_empty()
+    );
+
+    first_client.cancel().await.unwrap();
+    second_client.cancel().await.unwrap();
+    reconnect_client.cancel().await.unwrap();
 
     broker.shutdown();
     assert!(TcpStream::connect(address).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn modern_subscription_receives_tool_list_changes() {
+    let mut broker = TestBroker::spawn();
+    let client = connect_mcp_subscription(broker.address(), broker.token()).await;
+    let mut first_subscription = client
+        .listen(SubscriptionFilter::builder().tools_list_changed().build())
+        .await
+        .unwrap();
+    let mut second_subscription = client
+        .listen(SubscriptionFilter::builder().tools_list_changed().build())
+        .await
+        .unwrap();
+
+    broker.write(&ready(DEFAULT_BROWSER_ID, 1, true, true, true));
+    assert_eq!(broker.read()["type"], "ready_ack");
+    for subscription in [&mut first_subscription, &mut second_subscription] {
+        let notification =
+            tokio::time::timeout(std::time::Duration::from_secs(5), subscription.next())
+                .await
+                .expect("timed out waiting for modern tools/list_changed")
+                .unwrap()
+                .expect("modern subscription ended before notification");
+        assert!(matches!(
+            notification,
+            ServerNotification::ToolListChangedNotification(_)
+        ));
+    }
+
+    let mut late_subscription = client
+        .listen(SubscriptionFilter::builder().tools_list_changed().build())
+        .await
+        .unwrap();
+    let replay = tokio::time::timeout(std::time::Duration::from_secs(5), late_subscription.next())
+        .await
+        .expect("timed out waiting for ready-state subscription replay")
+        .unwrap()
+        .expect("late subscription ended before ready-state replay");
+    assert!(matches!(
+        replay,
+        ServerNotification::ToolListChangedNotification(_)
+    ));
+
+    first_subscription.cancel().await.unwrap();
+    second_subscription.cancel().await.unwrap();
+    late_subscription.cancel().await.unwrap();
+    client.cancel().await.unwrap();
+    broker.shutdown();
+}
+
+fn tool_names(tools: &[rmcp::model::Tool]) -> Vec<&str> {
+    let mut names: Vec<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+    names.sort_unstable();
+    names
 }
 
 fn raw_initialize(

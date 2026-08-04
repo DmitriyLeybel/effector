@@ -1,13 +1,19 @@
 use anyhow::Result;
 use rmcp::{
-    ErrorData as McpError,
-    handler::server::wrapper::Parameters,
-    model::{CallToolResult, ContentBlock},
+    ErrorData as McpError, ServerHandler,
+    handler::server::{tool::ToolCallContext, wrapper::Parameters},
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+        ListToolsResult, PaginatedRequestParams, ResultType, ServerCapabilities, ServerInfo,
+        SubscriptionFilter,
+    },
     schemars::JsonSchema,
-    tool, tool_router,
+    service::{NotificationContext, RequestContext, RoleServer, SubscriptionContext},
+    tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::{collections::VecDeque, sync::Mutex};
 
 use crate::{
     broker::BrowserRequestHandle,
@@ -15,6 +21,7 @@ use crate::{
         BrowserSnapshotParams, BrowserSnapshotToolOutput, decode_params,
         execute as execute_browser_snapshot,
     },
+    capabilities::ToolListNotifier,
     protocol::{BrowserMethod, DomainError},
     runtime::BrokerRuntime,
 };
@@ -23,11 +30,18 @@ use crate::{
 pub(crate) struct EffectorMcp {
     browser: BrowserRequestHandle,
     runtime: BrokerRuntime,
+    legacy_tool_list_notifier: std::sync::Arc<ToolListNotifier>,
+    subscription_notifiers: std::sync::Arc<Mutex<VecDeque<std::sync::Arc<ToolListNotifier>>>>,
 }
 
 impl EffectorMcp {
     pub(crate) fn new(browser: BrowserRequestHandle, runtime: BrokerRuntime) -> Self {
-        Self { browser, runtime }
+        Self {
+            browser,
+            runtime,
+            legacy_tool_list_notifier: ToolListNotifier::new(),
+            subscription_notifiers: std::sync::Arc::new(Mutex::new(VecDeque::new())),
+        }
     }
 }
 
@@ -48,7 +62,7 @@ struct TabsListParams {
     cursor: Option<usize>,
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl EffectorMcp {
     #[tool(
         name = "browser.list",
@@ -111,6 +125,99 @@ impl EffectorMcp {
                 "Effector browser request failed: {error:#}"
             ))]),
         }
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for EffectorMcp {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .build(),
+        )
+        .with_server_info(Implementation::from_build_env())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let discovery = self.runtime.discovery_snapshot();
+        let tools = Self::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| discovery.allows(tool.name.as_ref()))
+            .collect();
+        Ok(ListToolsResult {
+            result_type: Some(ResultType::COMPLETE),
+            tools,
+            meta: None,
+            next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        if !self
+            .runtime
+            .discovery_snapshot()
+            .allows(request.name.as_ref())
+        {
+            return Err(McpError::invalid_params("tool not found", None));
+        }
+        let router = Self::tool_router();
+        router
+            .call(ToolCallContext::new(self, request, context))
+            .await
+    }
+
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.runtime
+            .register_tool_list_notifier(&self.legacy_tool_list_notifier);
+        self.legacy_tool_list_notifier.start_legacy(context.peer);
+    }
+
+    fn accepted_subscription_filter(
+        &self,
+        requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        if requested.tools_list_changed == Some(true) {
+            let notifier = ToolListNotifier::new();
+            self.runtime.register_tool_list_notifier(&notifier);
+            self.subscription_notifiers
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push_back(notifier);
+        }
+        Some(requested.supported_by(&self.get_info().capabilities))
+    }
+
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
+        if context.accepted().tools_list_changed != Some(true) {
+            context.cancelled().await;
+            return Ok(());
+        }
+        let notifier = self
+            .subscription_notifiers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front();
+        let Some(notifier) = notifier else {
+            return Err(McpError::internal_error(
+                "tool-list subscription state was unavailable",
+                None,
+            ));
+        };
+        notifier.listen(context).await;
+        Ok(())
     }
 }
 
